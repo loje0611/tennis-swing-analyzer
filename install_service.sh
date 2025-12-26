@@ -1,12 +1,12 @@
 #!/bin/bash
-# Tennis Logger V2 systemd 서비스 설치 스크립트
+# Tennis Logger systemd 서비스 설치 스크립트
 
-SERVICE_NAME="tennis-logger-v2"
-SERVICE_FILE="tennis-logger-v2.service"
+SERVICE_NAME="tennis-logger"
+SERVICE_FILE="tennis-logger.service"
 SYSTEMD_DIR="/etc/systemd/system"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Tennis Logger V2 systemd 서비스 설치 ==="
+echo "=== Tennis Logger systemd 서비스 설치 ==="
 echo ""
 
 # 서비스 파일이 있는지 확인

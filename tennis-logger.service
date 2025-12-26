@@ -1,7 +1,8 @@
 [Unit]
-Description=Tennis Swing Logger V2 - Streamlit BLE Data Collection App
+Description=Tennis Swing Logger - Streamlit BLE Data Collection App
 After=network.target bluetooth.service
 Wants=bluetooth.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -9,9 +10,12 @@ User=keunu
 Group=keunu
 WorkingDirectory=/home/keunu/tennis-swing-analyzer
 Environment="PATH=/home/keunu/tennis-swing-analyzer/venv/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/keunu/tennis-swing-analyzer/venv/bin/streamlit run /home/keunu/tennis-swing-analyzer/tennis_logger_v2.py --server.headless=true --server.port=8501 --server.address=0.0.0.0
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/keunu/tennis-swing-analyzer/venv/bin/streamlit run /home/keunu/tennis-swing-analyzer/tennis_logger.py --server.headless=true --server.port=8501 --server.address=0.0.0.0
 Restart=always
 RestartSec=10
+TimeoutStartSec=30
+TimeoutStopSec=30
 StandardOutput=journal
 StandardError=journal
 
