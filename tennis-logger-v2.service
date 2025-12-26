@@ -1,0 +1,20 @@
+[Unit]
+Description=Tennis Swing Logger V2 - Streamlit BLE Data Collection App
+After=network.target bluetooth.service
+Wants=bluetooth.service
+
+[Service]
+Type=simple
+User=keunu
+Group=keunu
+WorkingDirectory=/home/keunu/tennis-swing-analyzer
+Environment="PATH=/home/keunu/tennis-swing-analyzer/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/keunu/tennis-swing-analyzer/venv/bin/streamlit run /home/keunu/tennis-swing-analyzer/tennis_logger_v2.py --server.headless=true --server.port=8501 --server.address=0.0.0.0
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
