@@ -8,7 +8,20 @@ def render_sidebar():
         st.title("⚙️ 설정")
         
         if st.session_state.view == 'collection':
-            st.info("🟢 센서 연결됨")
+            if st.session_state.ble_manager.connected:
+                st.info("🟢 BLE 연결됨")
+                
+                # Check sensor status
+                if hasattr(st.session_state.ble_manager, 'sensor_status'):
+                     status = st.session_state.ble_manager.sensor_status
+                     if status == 'error':
+                         st.error("⚠️ 센서 데이터 수신 불가 (I2C 오류)")
+                     elif status == 'ok':
+                         st.success("✅ 센서 정상 동작 중")
+                     else:
+                         st.warning("⏳ 센서 상태 확인 중...")
+            else:
+                 st.info("⚪ 센서 미연결")
             
             # 큐 상태 표시
             if 'data_queue' in st.session_state:

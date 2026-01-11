@@ -15,6 +15,7 @@ class BLEManager(abc.ABC):
         self.data_queue = data_queue
         self.connected = False
         self.running = False
+        self.sensor_status = "unknown" # unknown, ok, error
 
     @abc.abstractmethod
     def start_connection(self, address: str):
@@ -83,8 +84,15 @@ class RealBLEManager(BLEManager):
             def notification_handler(sender, data: bytearray):
                 try:
                     decoded = data.decode('utf-8').strip()
+                    
+                    if decoded == "ERR:NO_SENSOR":
+                         self.sensor_status = "error"
+                         return
+
                     parts = decoded.split(',')
                     if len(parts) == 6:
+                        # Sensor is OK
+                        self.sensor_status = "ok"
                         timestamp = datetime.now()
                         data_point = {
                             'timestamp': timestamp,
