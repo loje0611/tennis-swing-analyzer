@@ -47,7 +47,7 @@ void MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
   Wire.beginTransmission(MPU6050_ADDR);
   Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
   Wire.endTransmission(false);
-  Wire.requestFrom(MPU6050_ADDR, 14, true);  // request a total of 14 registers
+  Wire.requestFrom((uint8_t)MPU6050_ADDR, (size_t)14, (bool)true);  // request a total of 14 registers
 
   int16_t raw_ax = Wire.read() << 8 | Wire.read();
   int16_t raw_ay = Wire.read() << 8 | Wire.read();
