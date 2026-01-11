@@ -1,6 +1,6 @@
 import streamlit as st
 import time
-from src.config import MAX_QUEUE_SIZE
+from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
 
 def render_sidebar():
@@ -41,7 +41,7 @@ def render_connection_view(scan_callback):
                 scan_callback()
         
         st.markdown("<br>", unsafe_allow_html=True)
-        st.caption("'Tennis_Sensor_V1' 디바이스를 찾아 연결합니다.")
+        st.caption(f"서비스 UUID '{SERVICE_UUID}'를 가진 센서를 찾아 연결합니다.")
 
 def render_collection_view():
     if st.session_state.collection_state == 'ready':

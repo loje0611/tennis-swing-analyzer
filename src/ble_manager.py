@@ -41,17 +41,14 @@ class RealBLEManager(BLEManager):
 
     async def scan(self) -> Tuple[bool, str, Optional[object]]:
         try:
-            devices = await BleakScanner.discover(timeout=5.0)
-            target_device = None
-            for device in devices:
-                if device.name == TARGET_DEVICE_NAME:
-                    target_device = device
-                    break
+            devices = await BleakScanner.discover(timeout=5.0, service_uuids=[SERVICE_UUID])
             
-            if target_device is None:
-                return False, f"{TARGET_DEVICE_NAME} 디바이스를 찾을 수 없습니다.", None
+            if not devices:
+                return False, "서비스 UUID와 일치하는 디바이스를 찾을 수 없습니다.", None
             
-            return True, "디바이스 발견", target_device
+            # 첫 번째 발견된 디바이스 선택
+            target_device = devices[0]
+            return True, f"디바이스 발견: {target_device.name or target_device.address}", target_device
         except Exception as e:
             logger.error(f"스캔 오류: {e}")
             return False, f"오류: {str(e)}", None
