@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # --- 1. 페이지 설정 ---
 st.set_page_config(
-    page_title="Tennis Swing Logger",
+    page_title="Data Logger Dashboard",
     page_icon="🎾",
     layout="wide"
 )

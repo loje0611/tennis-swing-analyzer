@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart Network Switcher
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %SCRIPT_PATH%/wifi-switcher.py
+WorkingDirectory=%SCRIPT_PATH%
+StandardOutput=journal
+StandardError=journal
+User=root
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

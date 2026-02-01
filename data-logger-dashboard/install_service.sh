@@ -1,13 +1,12 @@
 #!/bin/bash
 # Tennis Logger systemd 서비스 설치 스크립트
 
-SERVICE_NAME="tennis-logger"
-SERVICE_FILE="tennis-logger.service"
+SERVICE_NAME="data-logger-dashboard"
+SERVICE_FILE="data-logger-dashboard.service"
 SYSTEMD_DIR="/etc/systemd/system"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "=== Tennis Logger systemd 서비스 설치 ==="
-echo ""
+echo "=== Data Logger Dashboard systemd 서비스 설치 ==="
 
 # 서비스 파일이 있는지 확인
 if [ ! -f "$SCRIPT_DIR/$SERVICE_FILE" ]; then
