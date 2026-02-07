@@ -18,8 +18,8 @@
 #endif
 
 // I2C Pins for Seeed XIAO ESP32C3
-#define SDA_PIN 6
-#define SCL_PIN 7
+#define SDA_PIN D4  // GPIO 6
+#define SCL_PIN D5  // GPIO 7
 
 #define LED_ON  LOW
 #define LED_OFF HIGH
@@ -42,7 +42,29 @@ bool MPU6050_Init() {
     Serial.println("I2C Init Failed");
     return false;
   }
-  Wire.setClock(400000); 
+  Wire.setClock(100000); // Reduce to 100kHz for stability checking
+
+  // --- I2C Scanner ---
+  Serial.println("Scanning I2C bus...");
+  int nDevices = 0;
+  for(byte address = 1; address < 127; address++ ) {
+    Wire.beginTransmission(address);
+    byte error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address < 16) Serial.print("0");
+      Serial.print(address,HEX);
+      Serial.println(" !");
+      nDevices++;
+    } else if (error==4) {
+      Serial.print("Unknown error at address 0x");
+      if (address < 16) Serial.print("0");
+      Serial.println(address,HEX);
+    }
+  }
+  if (nDevices == 0) Serial.println("No I2C devices found\n");
+  else Serial.println("done\n");
+  // -------------------
   
   // Wake up MPU6050
   Wire.beginTransmission(MPU6050_ADDR);
