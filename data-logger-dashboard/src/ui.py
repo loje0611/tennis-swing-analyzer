@@ -1,5 +1,7 @@
 import streamlit as st
 import time
+import subprocess
+import re
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
 
@@ -40,6 +42,95 @@ def render_sidebar():
                     st.session_state.disconnect_func()
         else:
             st.info("⚪ 센서 미연결")
+
+        st.markdown("---")
+
+        # 📶 스마트 와이파이 설정
+        with st.expander("WiFi 설정"):
+            if st.button("🔄 와이파이 검색"):
+                with st.spinner("주변 네트워크 검색 중..."):
+                    try:
+                        # User requested command
+                        cmd = ["sudo", "nmcli", "-f", "SSID,SIGNAL,BARS", "device", "wifi", "list", "--rescan", "yes"]
+                        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        
+                        if result.returncode == 0:
+                            networks = []
+                            seen_ssids = set()
+                            
+                            lines = result.stdout.strip().split('\n')
+                            if len(lines) > 1:
+                                # Header is usually first line.
+                                for line in lines[1:]:
+                                    line = line.strip()
+                                    if not line: continue
+                                    # nmcli output is spaced. Last token is BARS, 2nd last is SIGNAL. Rest is SSID.
+                                    # Fallback for single space separation if alignment varies
+                                    parts = line.rsplit(None, 2) 
+                                    
+                                    if len(parts) >= 3:
+                                        ssid = parts[0].strip()
+                                        signal = parts[1].strip()
+                                        bars = parts[2].strip()
+                                        
+                                        if ssid and ssid != "--" and ssid not in seen_ssids:
+                                            try:
+                                                sig_int = int(signal)
+                                                networks.append({'SSID': ssid, 'SIGNAL': sig_int, 'BARS': bars})
+                                                seen_ssids.add(ssid)
+                                            except:
+                                                pass
+                            
+                            # Sort by signal strength desc
+                            networks.sort(key=lambda x: x['SIGNAL'], reverse=True)
+                            st.session_state.wifi_networks = [f"{n['SSID']} ({n['BARS']})" for n in networks]
+                            st.session_state.raw_wifi_networks = networks
+                        else:
+                            st.error("스캔 실패")
+                    except Exception as e:
+                        st.error(f"오류: {e}")
+
+            wifi_options = st.session_state.get('wifi_networks', [])
+            raw_networks = st.session_state.get('raw_wifi_networks', [])
+            
+            selected_wifi_str = st.selectbox("네트워크 선택", wifi_options)
+            wifi_password = st.text_input("비밀번호", type="password")
+            
+            if st.button("연결하기"):
+                if selected_wifi_str:
+                    try:
+                        index = wifi_options.index(selected_wifi_str)
+                        target_ssid = raw_networks[index]['SSID']
+                        
+                        with st.spinner(f"'{target_ssid}'에 연결 중..."):
+                            cmd = ["sudo", "nmcli", "device", "wifi", "connect", target_ssid, "password", wifi_password]
+                            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                            
+                            if res.returncode == 0:
+                                st.success(f"✅ '{target_ssid}' 연결 성공! IP가 변경될 수 있습니다.")
+                            else:
+                                st.error(f"❌ 연결 실패: {res.stderr}")
+                    except ValueError:
+                         st.error("네트워크 선택 오류")
+                else:
+                    st.warning("네트워크를 선택하세요.")
+
+        # 🛑 안전 종료
+        st.markdown("---")
+        if st.button("시스템 종료", type="primary"):
+             st.session_state.show_shutdown_confirm = True
+        
+        if st.session_state.get('show_shutdown_confirm', False):
+            st.warning("⚠️ 정말로 시스템을 종료하시겠습니까?")
+            col_sd1, col_sd2 = st.columns(2)
+            with col_sd1:
+                if st.button("예, 종료합니다"):
+                    st.info("종료 중... 초록불이 꺼지면 전원을 분리하세요.")
+                    subprocess.run(["sudo", "shutdown", "-h", "now"])
+            with col_sd2:
+                if st.button("취소"):
+                    st.session_state.show_shutdown_confirm = False
+                    st.rerun()
 
 def render_connection_view(scan_callback):
     st.markdown("---")
