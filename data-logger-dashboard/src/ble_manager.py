@@ -169,16 +169,19 @@ class RealBLEManager(BLEManager):
             # Battery Service Logic
             self.battery_level = None
             try:
+                logger.info(f"배터리 레벨 읽기 시도 (UUID: {BATTERY_CHAR_UUID})")
                 # Try to read initial value
                 bat_bytes = await self.client.read_gatt_char(BATTERY_CHAR_UUID)
+                logger.info(f"배터리 Raw Data: {bat_bytes}")
                 self.battery_level = int(bat_bytes[0])
                 logger.info(f"배터리 레벨: {self.battery_level}%")
             except Exception as e:
-                logger.warning(f"배터리 읽기 실패 (서비스 없을 수 있음): {e}")
+                logger.warning(f"배터리 읽기 실패 (서비스 없을 수 있음): {e}", exc_info=True)
 
             # Subscribe to battery notifications if supported (Standard Battery Service usually supports Notify)
             try:
                 def battery_handler(sender, data):
+                    logger.info(f"배터리 알림 수신: {data}")
                     self.battery_level = int(data[0])
                     logger.info(f"배터리 업데이트: {self.battery_level}%")
                 

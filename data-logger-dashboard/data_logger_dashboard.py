@@ -19,6 +19,10 @@ st.set_page_config(
 
 # --- 2. 세션 상태 초기화 ---
 if 'view' not in st.session_state:
+    # If already connected (cached manager), go straight to collection
+    # We need to access manager first to check
+    # But manager init happens below. Let's do view init after manager init?
+    # Or just default 'connection' and flip it later.
     st.session_state.view = 'connection'
 if 'collection_state' not in st.session_state:
     st.session_state.collection_state = 'ready'
@@ -27,21 +31,19 @@ if 'recorded_data' not in st.session_state:
 if 'queue_overflow_count' not in st.session_state:
     st.session_state.queue_overflow_count = 0
 
-# 큐 초기화
-if 'data_queue' not in st.session_state:
-    st.session_state.data_queue = Queue(maxsize=MAX_QUEUE_SIZE)
+@st.cache_resource
+def get_manager():
+    logger.info("Initializing RealBLEManager (Cached)")
+    return RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
 
-def initialize_manager():
-    # 기존 매니저가 있다면 정리
-    if 'ble_manager' in st.session_state:
-        st.session_state.ble_manager.stop()
-    
-    logger.info("Initializing RealBLEManager")
-    st.session_state.ble_manager = RealBLEManager(st.session_state.data_queue)
-
-# 매니저 초기화
 if 'ble_manager' not in st.session_state:
-    initialize_manager()
+    st.session_state.ble_manager = get_manager()
+    st.session_state.data_queue = st.session_state.ble_manager.data_queue
+    
+    # Check if already connected (e.g. after refresh)
+    if st.session_state.ble_manager.connected:
+        st.session_state.view = 'collection'
+        st.info("🔄 기존 연결을 복구했습니다.")
 
 # 연결 해제 콜백 정의
 def disconnect():
