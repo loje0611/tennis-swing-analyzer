@@ -132,10 +132,7 @@ void setup() {
   // Wait for serial (optional, for debugging)
   // delay(1000);
   
-  // Print MAC Address
-  Serial.println();
-  Serial.print("ESP32 Bluetooth MAC Address: ");
-  Serial.println(NimBLEDevice::getAddress().toString().c_str());
+
 
   // Init MPU6050
   if (!MPU6050_Init()) {
@@ -146,6 +143,11 @@ void setup() {
 
   // Init NimBLE
   NimBLEDevice::init(DEVICE_NAME);
+
+  // Print MAC Address
+  Serial.println();
+  Serial.print("ESP32 Bluetooth MAC Address: ");
+  Serial.println(NimBLEDevice::getAddress().toString().c_str());
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
