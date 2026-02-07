@@ -6,7 +6,7 @@ from datetime import datetime
 from queue import Queue
 from typing import Optional, Tuple, List
 from bleak import BleakScanner, BleakClient
-from src.config import TARGET_DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID
+from src.config import TARGET_DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID, BATTERY_SERVICE_UUID, BATTERY_CHAR_UUID
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class RealBLEManager(BLEManager):
         self.thread: Optional[threading.Thread] = None
         self.queue_overflow_count = 0
         self.last_error = None
+        self.battery_level = None
 
     async def scan(self) -> Tuple[bool, str, Optional[object]]:
         try:
@@ -165,6 +166,27 @@ class RealBLEManager(BLEManager):
                 except Exception as e:
                     logger.warning(f"데이터 파싱 오류: {e}")
             
+            # Battery Service Logic
+            self.battery_level = None
+            try:
+                # Try to read initial value
+                bat_bytes = await self.client.read_gatt_char(BATTERY_CHAR_UUID)
+                self.battery_level = int(bat_bytes[0])
+                logger.info(f"배터리 레벨: {self.battery_level}%")
+            except Exception as e:
+                logger.warning(f"배터리 읽기 실패 (서비스 없을 수 있음): {e}")
+
+            # Subscribe to battery notifications if supported (Standard Battery Service usually supports Notify)
+            try:
+                def battery_handler(sender, data):
+                    self.battery_level = int(data[0])
+                    logger.info(f"배터리 업데이트: {self.battery_level}%")
+                
+                await self.client.start_notify(BATTERY_CHAR_UUID, battery_handler)
+                logger.info("배터리 알림 구독 성공")
+            except Exception as e:
+                logger.warning(f"배터리 알림 구독 실패: {e}")
+
             await self.client.start_notify(CHARACTERISTIC_UUID, notification_handler)
             logger.info("Notification 시작됨")
             
@@ -172,7 +194,12 @@ class RealBLEManager(BLEManager):
                 await asyncio.sleep(0.1)
             
             if self.client.is_connected:
-                await self.client.stop_notify(CHARACTERISTIC_UUID)
+                try:
+                    await self.client.stop_notify(CHARACTERISTIC_UUID)
+                except: pass
+                try:
+                    await self.client.stop_notify(BATTERY_CHAR_UUID)
+                except: pass
                 await self.client.disconnect()
             
         except Exception as e:
@@ -185,6 +212,9 @@ class RealBLEManager(BLEManager):
                     await self.client.stop_notify(CHARACTERISTIC_UUID)
                 except Exception:
                     pass
+                try:
+                    await self.client.stop_notify(BATTERY_CHAR_UUID)
+                except: pass
                 try:
                     await self.client.disconnect()
                 except Exception:

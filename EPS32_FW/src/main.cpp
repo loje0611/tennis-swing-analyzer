@@ -126,15 +126,35 @@ class MyServerCallbacks: public NimBLEServerCallbacks {
     }
 };
 
+// Battery Service
+#define BATTERY_SERVICE_UUID "180f"
+#define BATTERY_CHAR_UUID    "2a19"
+#define BAT_PIN              A0 
+// Calibration: 
+// analogRead(A0) -> 0~4095
+// V_BAT = (ADC / 4095) * 3.3V * (Divider Ratio)
+// Example: if using Seeed Xiao Expansion Board, it has voltage divider (R1=R2=100k?). 
+// Actually Xiao ESP32C3 reads VBAT efficiently. 
+// Let's assume raw reading for now or simple mapping 
+// 4.2V = 100%, 3.3V = 0%
+NimBLECharacteristic* pBatCharacteristic = NULL;
+unsigned long last_bat_time = 0;
+
 void setup() {
   Serial.begin(115200);
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LED_OFF); // Off initially
+  
+  // Analog Setup
+  analogReadResolution(12);
 
   // Wait for serial (optional, for debugging)
   // delay(1000);
   
-
+  // Print MAC Address
+  Serial.println();
+  Serial.print("ESP32 Bluetooth MAC Address: ");
+  Serial.println(NimBLEDevice::getAddress().toString().c_str());
 
   // Init MPU6050
   if (!MPU6050_Init()) {
@@ -145,24 +165,26 @@ void setup() {
 
   // Init NimBLE
   NimBLEDevice::init(DEVICE_NAME);
-
-  // Print MAC Address
-  Serial.println();
-  Serial.print("ESP32 Bluetooth MAC Address: ");
-  Serial.println(NimBLEDevice::getAddress().toString().c_str());
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
+  // --- Sensor Service ---
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
-
-  // NimBLE does not need manual BLE2902 descriptor
   pCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID,
                       NIMBLE_PROPERTY::READ |
                       NIMBLE_PROPERTY::NOTIFY
                     );
-
   pService->start();
+
+  // --- Battery Service ---
+  NimBLEService *pBatService = pServer->createService(BATTERY_SERVICE_UUID);
+  pBatCharacteristic = pBatService->createCharacteristic(
+                          BATTERY_CHAR_UUID,
+                          NIMBLE_PROPERTY::READ |
+                          NIMBLE_PROPERTY::NOTIFY
+                        );
+  pBatService->start();
 
   // Start advertising
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
@@ -170,6 +192,7 @@ void setup() {
   // Create explicit advertisement data
   NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
   oAdvertisementData.setFlags(0x06); // General_Discoverable | BLE_Only (BR_EDR_NOT_SUPPORTED)
+  // Note: We only advertise the main service UUID to save space/avoid confusion
   oAdvertisementData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
   
   // Create explicit scan response data (Name goes here because it's long)
@@ -188,6 +211,31 @@ void setup() {
   Serial.println("]");
 }
 
+// Helper to read battery
+uint8_t readBatteryLevel() {
+    uint32_t raw = analogRead(BAT_PIN);
+    // Simple mapping: 
+    // Xiao ESP32C3 analog reference is essentially VDD3.3? 
+    // If using divider 1/2: 4.2V -> 2.1V at pin. 
+    // 2.1V / 3.3V * 4095 = 2605 (Max)
+    // 3.3V -> 1.65V at pin.
+    // 1.65V / 3.3V * 4095 = 2048 (Min)
+    // Let's implement a dummy logic or simple approximation for now.
+    // *ADJUST THIS CALIBRATION BASED ON HARDWARE*
+    
+    // Assuming Divider 0.5 (R1=R2)
+    float voltage = (raw / 4095.0) * 3.3 * 2.0; 
+    
+    int percentage = (int)((voltage - 3.3) / (4.2 - 3.3) * 100);
+    if (percentage > 100) percentage = 100;
+    if (percentage < 0) percentage = 0;
+    
+    // Debug
+    // Serial.printf("Bat: %d (%.2fV)\n", raw, voltage);
+    
+    return (uint8_t)percentage;
+}
+
 void loop() {
   unsigned long current_time = millis();
 
@@ -202,6 +250,16 @@ void loop() {
     }
   } else {
     digitalWrite(LED_BUILTIN, LED_ON); // Connected -> Solid ON
+  }
+  
+  // Battery Update (Every 10 seconds)
+  if (current_time - last_bat_time >= 10000) {
+      last_bat_time = current_time;
+      uint8_t level = readBatteryLevel();
+      pBatCharacteristic->setValue(&level, 1);
+      if (deviceConnected) {
+          pBatCharacteristic->notify();
+      }
   }
 
   // Sampling Logic

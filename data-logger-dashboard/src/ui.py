@@ -22,6 +22,17 @@ def render_sidebar():
                          st.success("✅ 센서 정상 동작 중")
                      else:
                          st.warning("⏳ 센서 상태 확인 중...")
+                
+                # Battery Level Display
+                if hasattr(st.session_state.ble_manager, 'battery_level'):
+                    bat_level = st.session_state.ble_manager.battery_level
+                    if bat_level is not None:
+                        if bat_level > 20:
+                            st.success(f"🔋 배터리: {bat_level}%")
+                        else:
+                            st.error(f"🪫 배터리 부족: {bat_level}%")
+                    else:
+                        st.info("🔋 배터리: 확인 중...")
             else:
                  st.info("⚪ 센서 미연결")
             
