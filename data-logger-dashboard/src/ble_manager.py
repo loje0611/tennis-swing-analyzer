@@ -39,16 +39,66 @@ class RealBLEManager(BLEManager):
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.queue_overflow_count = 0
+        self.last_error = None
 
     async def scan(self) -> Tuple[bool, str, Optional[object]]:
         try:
-            devices = await BleakScanner.discover(timeout=5.0, service_uuids=[SERVICE_UUID])
+            logger.info("BLE 스캔 시작 (Timeout: 5.0s)...")
+            # discover returns a tuple of (device, advertisement_data) dict in newer Bleak versions if return_adv=True is used, 
+            # BUT standard discover returns a list of BLEDevice objects which DO NOT have metadata directly.
+            # We need to use scanning with callback or just check the device object properties carefully.
             
-            if not devices:
-                return False, "서비스 UUID와 일치하는 디바이스를 찾을 수 없습니다.", None
+            # Actually, standard discover() returns List[BLEDevice]. 
+            # BLEDevice has .metadata only in some versions or it's on the advertisement data.
+            # Let's use discover(return_adv=True) to get both.
             
-            # 첫 번째 발견된 디바이스 선택
-            target_device = devices[0]
+            devices_dict = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            
+            target_device = None
+            found_log = []
+            
+            for address, (device, advertisement_data) in devices_dict.items():
+                name = device.name or "Unknown"
+                uuids = advertisement_data.service_uuids
+                rssi = advertisement_data.rssi
+                found_log.append(f"- {name} [{device.address}] (RSSI: {rssi}, UUIDs: {uuids})")
+                
+                # 1. Check Service UUID
+                if SERVICE_UUID.lower() in [str(u).lower() for u in uuids]:
+                    target_device = device
+                    logger.info(f"UUID로 디바이스 찾음: {name}")
+                    break
+                
+                # 2. Check Device Name (Fallback)
+                if name == TARGET_DEVICE_NAME:
+                    target_device = device
+                    logger.info(f"이름으로 디바이스 찾음: {name}")
+                    break
+            
+            if not target_device:
+                logger.warning("스캔 결과:\n" + "\n".join(found_log))
+                
+                # Sort found_log by RSSI (descending) if possible, but they are strings now.
+                # Let's recreate a simple list for display
+                sorted_devices = sorted(devices_dict.values(), key=lambda x: x[1].rssi, reverse=True)
+                top_devices = []
+                for idx, (dev, adv) in enumerate(sorted_devices[:10]):
+                    name = dev.name or "Unknown"
+                    top_devices.append(f"{idx+1}. {name} ({adv.rssi}dBm) [{dev.address}]")
+                
+                device_list_str = "\n".join(top_devices)
+                
+                # Create a more detailed debug string with UUIDs
+                debug_details = []
+                for idx, (dev, adv) in enumerate(sorted_devices[:5]): # Top 5 details
+                     debug_details.append(f"{idx+1}. {dev.name} [{dev.address}]")
+                     debug_details.append(f"   RSSI: {adv.rssi}")
+                     debug_details.append(f"   UUIDs: {adv.service_uuids}")
+                
+                debug_str = "\n".join(debug_details)
+                
+                return False, f"디바이스를 찾을 수 없습니다.\n\n[상위 5개 디바이스 상세]\n{debug_str}", None
+            
             return True, f"디바이스 발견: {target_device.name or target_device.address}", target_device
         except Exception as e:
             logger.error(f"스캔 오류: {e}")
@@ -127,6 +177,7 @@ class RealBLEManager(BLEManager):
             
         except Exception as e:
             logger.error(f"BLE 연결/수집 오류: {e}")
+            self.last_error = str(e)
         finally:
             self.connected = False
             if self.client and self.client.is_connected:

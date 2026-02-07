@@ -131,6 +131,11 @@ void setup() {
 
   // Wait for serial (optional, for debugging)
   // delay(1000);
+  
+  // Print MAC Address
+  Serial.println();
+  Serial.print("ESP32 Bluetooth MAC Address: ");
+  Serial.println(NimBLEDevice::getAddress().toString().c_str());
 
   // Init MPU6050
   if (!MPU6050_Init()) {
@@ -157,11 +162,18 @@ void setup() {
 
   // Start advertising
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
   
-  // NimBLE specific advertising settings can be added here if needed
-  // pAdvertising->setMinPreferred(0x06); 
+  // Create explicit advertisement data
+  NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
+  oAdvertisementData.setFlags(0x06); // General_Discoverable | BLE_Only (BR_EDR_NOT_SUPPORTED)
+  oAdvertisementData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  
+  // Create explicit scan response data (Name goes here because it's long)
+  NimBLEAdvertisementData oScanResponseData = NimBLEAdvertisementData();
+  oScanResponseData.setName(DEVICE_NAME);
+
+  pAdvertising->setAdvertisementData(oAdvertisementData);
+  pAdvertising->setScanResponseData(oScanResponseData);
   
   pAdvertising->start();
   Serial.println("Waiting for a client connection to notify...");

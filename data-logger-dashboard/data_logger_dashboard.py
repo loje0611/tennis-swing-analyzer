@@ -68,12 +68,17 @@ def scan_and_connect():
         success, message, device = await st.session_state.ble_manager.scan()
         if success:
             st.session_state.ble_manager.start_connection(device.address if device else "")
-            # 연결 확인을 위해 잠시 대기
-            await asyncio.sleep(1.0)
-            if st.session_state.ble_manager.connected:
-                return True, "연결 성공"
-            else:
-                return False, "연결 실패 (타임아웃 등)"
+            # 연결 확인을 위해 대기 (최대 5초)
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                if st.session_state.ble_manager.connected:
+                    return True, "연결 성공"
+                
+                # Check for explicit error
+                if st.session_state.ble_manager.last_error:
+                    return False, f"연결 오류: {st.session_state.ble_manager.last_error}"
+            
+            return False, "연결 실패 (타임아웃: 5초 경과)"
         else:
             return False, message
 
