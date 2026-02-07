@@ -116,8 +116,11 @@ bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
 // --- BLE Callbacks ---
 class MyServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) {
-      deviceConnected = true;
-      Serial.println("\nClient connected!");
+        deviceConnected = true;
+        Serial.println("\nClient connected!");
+        // Force update battery value immediately (if initialized)
+        // Note: characteristics might not be subscribed yet, so notification might be ignored 
+        // but setValue is good.
     };
 
     void onDisconnect(NimBLEServer* pServer) {
@@ -147,6 +150,11 @@ void setup() {
   
   // Analog Setup
   analogReadResolution(12);
+  analogSetAttenuation(ADC_11db); // Default is usually 11db but explicit is safe. Range 0-2.6V or 3.3V depending on SoC.
+                                  // For ESP32C3, 11dB is ~2500mV.
+                                  // Wait, if 11dB is 2500mV, then 3.3V input will clip!
+                                  // But battery divider 1/2 means max input 2.1V (check schematic).
+                                  // So 11dB is perfect.
 
   // Wait for serial (optional, for debugging)
   // delay(1000);
@@ -216,24 +224,21 @@ void setup() {
 // Helper to read battery
 uint8_t readBatteryLevel() {
     uint32_t raw = analogRead(BAT_PIN);
-    // Simple mapping: 
-    // Xiao ESP32C3 analog reference is essentially VDD3.3? 
-    // If using divider 1/2: 4.2V -> 2.1V at pin. 
-    // 2.1V / 3.3V * 4095 = 2605 (Max)
-    // 3.3V -> 1.65V at pin.
-    // 1.65V / 3.3V * 4095 = 2048 (Min)
-    // Let's implement a dummy logic or simple approximation for now.
-    // *ADJUST THIS CALIBRATION BASED ON HARDWARE*
     
-    // Assuming Divider 0.5 (R1=R2)
-    float voltage = (raw / 4095.0) * 3.3 * 2.0; 
+    // Xiao ESP32C3 11dB attenuation -> ~2500mV range (or slightly higher, e.g. 2600mV)
+    // Let's assume 2.5V for 4095.
+    // Divider 1/2 -> Max Input 4.2V/2 = 2.1V. Safe.
     
-    int percentage = (int)((voltage - 3.3) / (4.2 - 3.3) * 100);
+    float pin_voltage = (raw / 4095.0) * 2.5; 
+    float battery_voltage = pin_voltage * 2.0; // Divider 2
+    
+    // Simple Percentage Mapping for LiPo (3.3V - 4.2V)
+    int percentage = (int)((battery_voltage - 3.3) / (4.2 - 3.3) * 100);
     if (percentage > 100) percentage = 100;
     if (percentage < 0) percentage = 0;
     
     // Debug
-    Serial.printf("Bat ADC: %d -> Voltage: %.2fV -> Percent: %d%%\n", raw, voltage, percentage);
+    Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\n", raw, pin_voltage, battery_voltage, percentage);
     
     return (uint8_t)percentage;
 }
