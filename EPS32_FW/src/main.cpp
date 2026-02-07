@@ -176,7 +176,12 @@ void setup() {
   pAdvertising->setScanResponseData(oScanResponseData);
   
   pAdvertising->start();
-  Serial.println("Waiting for a client connection to notify...");
+  Serial.print("Waiting for a client connection to notify...");
+  Serial.print(" [MAC: ");
+  Serial.print(NimBLEDevice::getAddress().toString().c_str());
+  Serial.print(" / UUID: ");
+  Serial.print(SERVICE_UUID);
+  Serial.println("]");
 }
 
 void loop() {
