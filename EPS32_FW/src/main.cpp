@@ -117,10 +117,12 @@ bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
 class MyServerCallbacks: public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* pServer) {
       deviceConnected = true;
+      Serial.println("\nClient connected!");
     };
 
     void onDisconnect(NimBLEServer* pServer) {
       deviceConnected = false;
+      Serial.println("\nClient disconnected.");
     }
 };
 
