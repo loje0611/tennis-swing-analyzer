@@ -238,7 +238,7 @@ uint8_t readBatteryLevel() {
     if (percentage < 0) percentage = 0;
     
     // Debug
-    Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\n", raw, pin_voltage, battery_voltage, percentage);
+    Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\r\n", raw, pin_voltage, battery_voltage, percentage);
     
     return (uint8_t)percentage;
 }

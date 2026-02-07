@@ -33,6 +33,9 @@ def render_sidebar():
                             st.error(f"🪫 배터리 부족: {bat_level}%")
                     else:
                         st.info("🔋 배터리: 확인 중...")
+                        # Debug info for 'Checking...'
+                        if st.session_state.ble_manager.last_error and "배터리" in str(st.session_state.ble_manager.last_error):
+                             st.caption(f"오류: {st.session_state.ble_manager.last_error}")
             else:
                  st.info("⚪ 센서 미연결")
             
