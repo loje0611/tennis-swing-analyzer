@@ -143,23 +143,20 @@ class MyServerCallbacks: public NimBLEServerCallbacks {
 NimBLECharacteristic* pBatCharacteristic = NULL;
 unsigned long last_bat_time = 0;
 
+// Switch Pin
+#define SWITCH_PIN D1 // GPIO 3
+
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LED_OFF); // Off initially
   
+  pinMode(SWITCH_PIN, INPUT_PULLUP); // Switch Input
+
   // Analog Setup
   analogReadResolution(12);
-  analogSetAttenuation(ADC_11db); // Default is usually 11db but explicit is safe. Range 0-2.6V or 3.3V depending on SoC.
-                                  // For ESP32C3, 11dB is ~2500mV.
-                                  // Wait, if 11dB is 2500mV, then 3.3V input will clip!
-                                  // But battery divider 1/2 means max input 2.1V (check schematic).
-                                  // So 11dB is perfect.
+  analogSetAttenuation(ADC_11db); 
 
   // Wait for serial (optional, for debugging)
   // delay(1000);
-  
-
 
   // Init MPU6050
   if (!MPU6050_Init()) {
@@ -238,7 +235,7 @@ uint8_t readBatteryLevel() {
     if (percentage < 0) percentage = 0;
     
     // Debug
-    Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\r\n", raw, pin_voltage, battery_voltage, percentage);
+    // Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\r\n", raw, pin_voltage, battery_voltage, percentage);
     
     return (uint8_t)percentage;
 }
@@ -246,20 +243,23 @@ uint8_t readBatteryLevel() {
 void loop() {
   unsigned long current_time = millis();
 
-  // LED Logic: Blink if not connected, Solid ON if connected
-  // Active Low: LOW is ON, HIGH is OFF
-  if (!deviceConnected) {
-    // Blink every 500ms
-    if ((current_time / 500) % 2 == 0) {
-      digitalWrite(LED_BUILTIN, LED_ON); 
-    } else {
-      digitalWrite(LED_BUILTIN, LED_OFF);
-    }
-  } else {
-    digitalWrite(LED_BUILTIN, LED_ON); // Connected -> Solid ON
-  }
+  // 1. Read Switch State
+  // LOW = Recording Mode (Switch ON, GND connected)
+  // HIGH = Standby Mode (Switch OFF, Pull-up)
+  bool isRecordingMode = (digitalRead(SWITCH_PIN) == LOW);
   
-  // Battery Update (Every 10 seconds)
+  static bool last_recording_mode = false;
+  if (isRecordingMode != last_recording_mode) {
+      last_recording_mode = isRecordingMode;
+      if (isRecordingMode) {
+          Serial.println("Mode Changed: RECORDING (Switch ON)");
+      } else {
+          Serial.println("Mode Changed: STANDBY (Switch OFF)");
+      }
+  }
+
+  // 2. Battery Update (Every 10 seconds)
+  // Only update if connected, or maybe always? Always is fine to keep internal state fresh.
   if (current_time - last_bat_time >= 10000) {
       last_bat_time = current_time;
       uint8_t level = readBatteryLevel();
@@ -269,8 +269,9 @@ void loop() {
       }
   }
 
-  // Sampling Logic
-  if (deviceConnected) {
+  // 3. Sampling & Transmission Logic
+  // Only send data if Connected AND in Recording Mode
+  if (deviceConnected && isRecordingMode) {
     if (current_time - last_sample_time >= SAMPLING_INTERVAL_MS) {
       last_sample_time = current_time;
 
@@ -287,19 +288,12 @@ void loop() {
             pCharacteristic->notify();
         }
       } else {
-        // I2C Read Failed - Try to re-init or just report error
-        // Let's try to re-init if it helps, or just send error
-        // Simple strategy: Try Init again once every second? 
-        // For now, just send error.
-        
-        // Optional: reduce error rate to 1Hz to avoid flooding? 
-        // But 50Hz error stream is fine for immediate feedback.
-        
+        // I2C Read Failed
         const char* errStr = "ERR:NO_SENSOR";
         pCharacteristic->setValue((uint8_t*)errStr, strlen(errStr));
         pCharacteristic->notify();
         
-        // Try to recover MPU connection periodically (e.g. every 1 sec)
+        // Try to recover MPU connection
         static unsigned long last_retry_time = 0;
         if (current_time - last_retry_time > 1000) {
            last_retry_time = current_time;
@@ -309,19 +303,13 @@ void loop() {
     }
   }
 
-  // NimBLE handles advertising restart automatically on disconnect usually, 
-  // or we can add it in onDisconnect callback. 
-  // But standard pattern often requires check. 
-  // Actually NimBLE auto-advertising usually requires explicit start in callback or loop.
-  // Let's safe guard it here similar to before.
-  
+  // 4. Connection Management
   if (!deviceConnected && oldDeviceConnected) {
       delay(500); // Give the bluetooth stack the chance to get things ready
       pServer->getAdvertising()->start(); // restart advertising
       Serial.println("Start advertising");
       oldDeviceConnected = deviceConnected;
   }
-  // Connecting (debounce)
   if (deviceConnected && !oldDeviceConnected) {
       oldDeviceConnected = deviceConnected;
   }
