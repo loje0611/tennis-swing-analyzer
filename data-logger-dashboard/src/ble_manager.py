@@ -132,6 +132,14 @@ class RealBLEManager(BLEManager):
             logger.info(f"BLE 연결 성공: {address}")
             self.connected = True
             
+            # Debug: List all services
+            logger.info("--- 서비스 목록 ---")
+            for service in self.client.services:
+                logger.info(f"Service: {service.uuid} ({service.description})")
+                for char in service.characteristics:
+                    logger.info(f"  - Char: {char.uuid} ({char.properties})")
+            logger.info("-------------------")
+            
             def notification_handler(sender, data: bytearray):
                 try:
                     decoded = data.decode('utf-8').strip()
