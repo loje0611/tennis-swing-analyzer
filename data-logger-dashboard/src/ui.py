@@ -1,61 +1,79 @@
 import streamlit as st
 import time
 import subprocess
-import re
+import pandas as pd
+from collections import deque
+from datetime import datetime
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
+
+# Try to import fragment (Streamlit 1.37+)
+try:
+    from streamlit import fragment
+except ImportError:
+    try:
+        from streamlit import experimental_fragment as fragment
+    except ImportError:
+        fragment = None
+
+# Visualization buffer size
+VIS_BUFFER_SIZE = 200
+
+def init_session_state():
+    if 'vis_buffer' not in st.session_state:
+        st.session_state.vis_buffer = deque(maxlen=VIS_BUFFER_SIZE)
+    if 'log_buffer' not in st.session_state:
+        st.session_state.log_buffer = []
+    if 'is_logging' not in st.session_state:
+        st.session_state.is_logging = False
+    if 'collection_state' not in st.session_state:
+        st.session_state.collection_state = 'ready' # ready, streaming
+    if 'main_category' not in st.session_state:
+        st.session_state.main_category = 'Forehand'
+    if 'sub_category' not in st.session_state:
+        st.session_state.sub_category = 'Flat'
+    if 'last_data_time' not in st.session_state:
+        st.session_state.last_data_time = datetime.now()
+    if 'show_save_confirm' not in st.session_state:
+        st.session_state.show_save_confirm = False
 
 def render_sidebar():
     with st.sidebar:
         st.title("⚙️ 설정")
         
-        if st.session_state.view == 'collection':
-            if st.session_state.ble_manager.connected:
-                st.info("🟢 BLE 연결됨")
-                
-                # Check sensor status
-                if hasattr(st.session_state.ble_manager, 'sensor_status'):
-                     status = st.session_state.ble_manager.sensor_status
-                     if status == 'error':
-                         st.error("⚠️ 센서 데이터 수신 불가 (I2C 오류)")
-                     elif status == 'ok':
-                         st.success("✅ 센서 정상 동작 중")
-                     else:
-                         st.warning("⏳ 센서 상태 확인 중...")
-                
-                # Battery Level Display
-                if hasattr(st.session_state.ble_manager, 'battery_level'):
-                    bat_level = st.session_state.ble_manager.battery_level
-                    if bat_level is not None:
-                        if bat_level > 20:
-                            st.success(f"🔋 배터리: {bat_level}%")
-                        else:
-                            st.error(f"🪫 배터리 부족: {bat_level}%")
-                    else:
-                        st.info("🔋 배터리: 확인 중...")
-                        # Debug info for 'Checking...'
-                        if st.session_state.ble_manager.last_error and "배터리" in str(st.session_state.ble_manager.last_error):
-                             st.caption(f"오류: {st.session_state.ble_manager.last_error}")
+        status_text = "⚪ 센서 미연결"
+        if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
+            if st.session_state.is_logging:
+                status_text = "🔴 파일 저장 중 (Logging)"
+                st.error(status_text)
             else:
-                 st.info("⚪ 센서 미연결")
+                status_text = "🟢 데이터 수신 중 (Streaming)"
+                st.success(status_text)
             
-            # 큐 상태 표시
-            if 'data_queue' in st.session_state:
-                queue_size = st.session_state.data_queue.qsize()
-                queue_usage = (queue_size / MAX_QUEUE_SIZE) * 100
-                st.metric("큐 사용률", f"{queue_usage:.1f}%", f"{queue_size}/{MAX_QUEUE_SIZE}")
-            
-            # 오버플로우 경고
-            overflow = st.session_state.get('queue_overflow_count', 0)
-            if overflow > 0:
-                st.warning(f"⚠️ 큐 오버플로우: {overflow}회")
-            
-            if st.button("연결 해제", type="secondary"):
-                # Callback to disconnect
+            # Check sensor status
+            if hasattr(st.session_state.ble_manager, 'sensor_status'):
+                 status = st.session_state.ble_manager.sensor_status
+                 if status == 'error':
+                     st.error("⚠️ 센서 데이터 수신 불가 (I2C 오류)")
+        else:
+            st.info(status_text)
+        
+        # 큐 상태 표시
+        if 'data_queue' in st.session_state:
+            queue_size = st.session_state.data_queue.qsize()
+            queue_usage = (queue_size / MAX_QUEUE_SIZE) * 100
+            st.caption(f"Buffer Usage: {queue_usage:.1f}% ({queue_size})")
+        
+        # 오버플로우 경고
+        if st.session_state.get('ble_manager'):
+             overflow = st.session_state.ble_manager.queue_overflow_count
+             if overflow > 0:
+                 st.warning(f"⚠️ 큐 오버플로우: {overflow}회")
+        
+        if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
+             if st.button("연결 해제", type="secondary"):
                 if 'disconnect_func' in st.session_state:
                     st.session_state.disconnect_func()
-        else:
-            st.info("⚪ 센서 미연결")
 
         st.markdown("---")
 
@@ -64,7 +82,6 @@ def render_sidebar():
             if st.button("🔄 와이파이 검색"):
                 with st.spinner("주변 네트워크 검색 중..."):
                     try:
-                        # User requested command
                         cmd = ["sudo", "nmcli", "-f", "SSID,SIGNAL,BARS", "device", "wifi", "list", "--rescan", "yes"]
                         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                         
@@ -74,12 +91,9 @@ def render_sidebar():
                             
                             lines = result.stdout.strip().split('\n')
                             if len(lines) > 1:
-                                # Header is usually first line.
                                 for line in lines[1:]:
                                     line = line.strip()
                                     if not line: continue
-                                    # nmcli output is spaced. Last token is BARS, 2nd last is SIGNAL. Rest is SSID.
-                                    # Fallback for single space separation if alignment varies
                                     parts = line.rsplit(None, 2) 
                                     
                                     if len(parts) >= 3:
@@ -95,7 +109,6 @@ def render_sidebar():
                                             except:
                                                 pass
                             
-                            # Sort by signal strength desc
                             networks.sort(key=lambda x: x['SIGNAL'], reverse=True)
                             st.session_state.wifi_networks = [f"{n['SSID']} ({n['BARS']})" for n in networks]
                             st.session_state.raw_wifi_networks = networks
@@ -161,111 +174,214 @@ def render_connection_view(scan_callback):
         st.markdown("<br>", unsafe_allow_html=True)
         st.caption(f"서비스 UUID '{SERVICE_UUID}'를 가진 센서를 찾아 연결합니다.")
 
-def render_collection_view():
-    if st.session_state.collection_state == 'ready':
-        _render_ready_state()
-    elif st.session_state.collection_state == 'recording':
-        _render_recording_state()
-    elif st.session_state.collection_state == 'review':
-        _render_review_state()
+def process_data_queue():
+    """Queue에서 데이터를 꺼내 버퍼에 저장"""
+    if 'data_queue' in st.session_state:
+        q = st.session_state.data_queue
+        
+        # 만약 로깅 중이 아니고 큐가 너무 많이 쌓였다면 (예: 브라우저 백그라운드 등)
+        # 최신 데이터만 남기고 스킵하여 실시간성 확보
+        if not st.session_state.is_logging and q.qsize() > 1000:
+            skipped = 0
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                    skipped += 1
+                except:
+                    break
+            st.toast(f"⚠️ 지연된 데이터 {skipped}개 스킵됨 (Real-time Sync)")
+            # 오버플로우 카운트 초기화 (UI 상의 혼란 방지)
+            if st.session_state.get('ble_manager'):
+                st.session_state.ble_manager.queue_overflow_count = 0
+            return
 
-def _render_ready_state():
-    st.markdown("---")
-    st.markdown("### 📝 녹화 준비")
+        # 정상 처리
+        # Batch Fetch Optimization
+        # 큐에 있는 모든 데이터를 한 번에 가져와서 처리 (렌더링 횟수 감소)
+        items = []
+        while not q.empty():
+            try:
+                items.append(q.get_nowait())
+            except:
+                break
+        
+        if items:
+            # Update last data time
+            st.session_state.last_data_time = datetime.now()
+            
+            # Visualization Buffer (Extend)
+            st.session_state.vis_buffer.extend(items)
+            
+            if st.session_state.is_logging:
+                st.session_state.log_buffer.extend(items)
+            
+            # Reset overflow count since we are consuming data
+            if st.session_state.get('ble_manager'):
+                st.session_state.ble_manager.queue_overflow_count = 0
+
+# --- Live Dashboard Logic using st.fragment ---
+# If fragment is available, use it to update only this part of the UI
+if fragment:
+    @fragment(run_every=0.1)
+    def render_live_dashboard():
+        process_data_queue()
+        
+        # --- Logging Control (Moved inside fragment for real-time updates) ---
+        col_log1, col_log2 = st.columns([2, 1])
+        with col_log1:
+            if st.session_state.is_logging:
+                if st.session_state.get('show_save_confirm', False):
+                    st.warning("⚠️ 정말로 데이터를 저장하시겠습니까?")
+                    c_save, c_discard = st.columns(2)
+                    with c_save:
+                        if st.button("✅ 저장 (Save)", type="primary", use_container_width=True):
+                             save_and_stop()
+                    with c_discard:
+                         if st.button("🗑️ 폐기 (Discard)", type="secondary", use_container_width=True):
+                             discard_and_stop()
+                else:
+                     if st.button("💾 파일 저장 중지 (Stop Logging)", type="primary", use_container_width=True):
+                         confirm_stop_logging()
+            else:
+                 if st.button("🔴 파일 저장 시작 (Start Logging)", use_container_width=True):
+                     start_logging()
+        
+        with col_log2:
+            if st.session_state.is_logging:
+                st.markdown(f"**수집된 데이터:** {len(st.session_state.log_buffer)} 개")
+            else:
+                st.markdown("**대기 중...**")
+
+        st.markdown("---")
+
+        # --- Sensor Status Check (Switch OFF?) ---
+        # 1초 이상 데이터가 없으면 Idle로 간주
+        time_since_last = (datetime.now() - st.session_state.get('last_data_time', datetime.now())).total_seconds()
+        is_idle = time_since_last > 1.0
+        
+        if is_idle:
+            st.warning("⏸️ 센서 대기 중 (Switch OFF) - 데이터를 수신하지 못하고 있습니다.")
+
+        # --- Live Visualization ---
+        # Latest Values
+        if st.session_state.vis_buffer:
+            latest = st.session_state.vis_buffer[-1]
+            
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Accel X", f"{latest['accel_x']:.2f}")
+            c2.metric("Accel Y", f"{latest['accel_y']:.2f}")
+            c3.metric("Accel Z", f"{latest['accel_z']:.2f}")
+            c4.metric("Gyro X", f"{latest['gyro_x']:.0f}")
+            c5.metric("Gyro Y", f"{latest['gyro_y']:.0f}")
+            c6.metric("Gyro Z", f"{latest['gyro_z']:.0f}")
+        
+        # Charts
+        tab1, tab2 = st.tabs(["📉 가속도 (Accel)", "🔄 자이로 (Gyro)"])
+        
+        if len(st.session_state.vis_buffer) > 0:
+            df = pd.DataFrame(st.session_state.vis_buffer)
+            
+            with tab1:
+                st.line_chart(df[['accel_x', 'accel_y', 'accel_z']])
+            
+            with tab2:
+                st.line_chart(df[['gyro_x', 'gyro_y', 'gyro_z']])
+        else:
+            if not is_idle:
+                st.info("데이터 수신 대기 중...")
+else:
+    # Fallback for older Streamlit versions (deprecated method using rerun)
+    def render_live_dashboard():
+        process_data_queue()
+        
+        # --- Logging Control ---
+        col_log1, col_log2 = st.columns([2, 1])
+        with col_log1:
+            if st.session_state.is_logging:
+                if st.session_state.get('show_save_confirm', False):
+                    st.warning("⚠️ 정말로 데이터를 저장하시겠습니까?")
+                    c_save, c_discard = st.columns(2)
+                    with c_save:
+                        if st.button("✅ 저장 (Save)", type="primary", use_container_width=True):
+                             save_and_stop()
+                    with c_discard:
+                         if st.button("🗑️ 폐기 (Discard)", type="secondary", use_container_width=True):
+                             discard_and_stop()
+                else:
+                     if st.button("💾 파일 저장 중지 (Stop Logging)", type="primary", use_container_width=True):
+                         confirm_stop_logging()
+            else:
+                 if st.button("🔴 파일 저장 시작 (Start Logging)", use_container_width=True):
+                     start_logging()
+        
+        with col_log2:
+            if st.session_state.is_logging:
+                st.markdown(f"**수집된 데이터:** {len(st.session_state.log_buffer)} 개")
+            else:
+                st.markdown("**대기 중...**")
+        
+        # ... logic ... (Simplified fallback)
+        st.warning("⚠️ Streamlit 버전이 낮아 'st.fragment'를 사용할 수 없습니다. 그래프 중복이 발생할 수 있습니다.")
+        time.sleep(0.1)
+        st.rerun()
+
+def render_collection_view():
+    init_session_state()
     
+    # --- Top Controls ---
     col1, col2 = st.columns(2)
     with col1:
         st.session_state.main_category = st.selectbox(
-            "대분류",
-            ["Forehand", "Backhand"],
-            key="main_cat",
+            "대분류", ["Forehand", "Backhand"], key="main_cat",
             index=0 if st.session_state.get('main_category') == 'Forehand' else 1
         )
-    
     with col2:
-        # Pre-select based on session state if needed, or default
         options = ["Flat", "Topspin", "Slice"]
         try:
             idx = options.index(st.session_state.get('sub_category', 'Flat'))
         except:
             idx = 0
-            
         st.session_state.sub_category = st.selectbox(
-            "소분류",
-            options,
-            key="sub_cat",
-            index=idx
+            "소분류", options, key="sub_cat", index=idx
         )
     
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔴 녹화 시작", type="primary", use_container_width=True):
-            st.session_state.collection_state = 'recording'
-            st.session_state.recorded_data = []
-            st.rerun()
-
-def _render_recording_state():
     st.markdown("---")
-    st.markdown("### 🔴 녹화 중")
     
-    # 데이터 수집 (UI 렌더링 시 큐에서 꺼냄)
-    if 'data_queue' in st.session_state:
-        while not st.session_state.data_queue.empty():
-            try:
-                data_point = st.session_state.data_queue.get_nowait()
-                st.session_state.recorded_data.append(data_point)
-            except Exception:
-                break
+    # Calling the fragment loop here
+    # This will render the charts and auto-update ONLY this part
+    render_live_dashboard()
+
+def start_logging():
+    st.session_state.is_logging = True
+    st.session_state.log_buffer = []
+    st.session_state.show_save_confirm = False
+    pass 
+
+def confirm_stop_logging():
+    st.session_state.show_save_confirm = True
+
+def save_and_stop():
+    st.session_state.is_logging = False
+    st.session_state.show_save_confirm = False
     
-    data_count = len(st.session_state.recorded_data)
-    st.info(f"데이터 수집 중... (현재 {data_count}개)")
-    
-    # 큐 상태가 꽉 찼는지 확인하여 경고 줄 수도 있음
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("⬛ 녹화 중지", type="primary", use_container_width=True):
-            st.session_state.collection_state = 'review'
-            st.rerun()
-            
-    # 자동 리런 for UI update
-    time.sleep(0.1)
+    if st.session_state.log_buffer:
+        try:
+            filepath = save_data_to_csv(
+                st.session_state.log_buffer,
+                st.session_state.main_category,
+                st.session_state.sub_category
+            )
+            st.success(f"✅ 데이터 저장 완료: {filepath}")
+            st.toast(f"File saved: {filepath}")
+        except Exception as e:
+            st.error(f"저장 오류: {e}")
+    else:
+        st.warning("저장할 데이터가 없습니다.")
     st.rerun()
 
-def _render_review_state():
-    st.markdown("---")
-    st.markdown("### 📊 녹화 완료")
-    
-    data_count = len(st.session_state.recorded_data)
-    st.info(f"총 {data_count}개의 데이터가 수집되었습니다.")
-    
-    if data_count > 0:
-        with st.expander("데이터 미리보기"):
-            preview_data = st.session_state.recorded_data[:10]
-            for i, data in enumerate(preview_data):
-                st.text(f"{i+1}. {data['timestamp'].strftime('%H:%M:%S.%f')[:-3]} - "
-                       f"Accel: ({data['accel_x']:.2f}, {data['accel_y']:.2f}, {data['accel_z']:.2f})")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("💾 저장 (Save)", type="primary", use_container_width=True):
-            try:
-                filepath = save_data_to_csv(
-                    st.session_state.recorded_data,
-                    st.session_state.main_category,
-                    st.session_state.sub_category
-                )
-                st.success(f"✅ 데이터가 저장되었습니다: {filepath}")
-                st.session_state.collection_state = 'ready'
-                st.session_state.recorded_data = []
-                # Don't rerun immediately to let user see success message
-            except Exception as e:
-                st.error(f"저장 오류: {e}")
-    
-    with col2:
-        if st.button("🗑️ 폐기 (Discard)", type="secondary", use_container_width=True):
-            st.session_state.collection_state = 'ready'
-            st.session_state.recorded_data = []
-            st.rerun()
+def discard_and_stop():
+    st.session_state.is_logging = False
+    st.session_state.show_save_confirm = False
+    st.session_state.log_buffer = []
+    st.toast("🗑️ 데이터가 폐기되었습니다.")
+    st.rerun()

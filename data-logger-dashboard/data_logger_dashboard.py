@@ -26,8 +26,10 @@ if 'view' not in st.session_state:
     st.session_state.view = 'connection'
 if 'collection_state' not in st.session_state:
     st.session_state.collection_state = 'ready'
-if 'recorded_data' not in st.session_state:
-    st.session_state.recorded_data = []
+if 'log_buffer' not in st.session_state:
+    st.session_state.log_buffer = []
+if 'is_logging' not in st.session_state:
+    st.session_state.is_logging = False
 if 'queue_overflow_count' not in st.session_state:
     st.session_state.queue_overflow_count = 0
 
@@ -51,7 +53,11 @@ def disconnect():
         st.session_state.ble_manager.stop()
     st.session_state.view = 'connection'
     st.session_state.collection_state = 'ready'
-    st.session_state.recorded_data = []
+    st.session_state.collection_state = 'ready'
+    st.session_state.log_buffer = []
+    st.session_state.is_logging = False
+    if 'vis_buffer' in st.session_state:
+        st.session_state.vis_buffer.clear()
     
     # 큐 비우기
     while not st.session_state.data_queue.empty():
