@@ -2,6 +2,7 @@ import os
 
 # --- 상수 정의 ---
 TARGET_DEVICE_NAME = os.getenv("TARGET_DEVICE_NAME", "Tennis_Sensor_V1")
+TARGET_DEVICE_ADDRESS = os.getenv("TARGET_DEVICE_ADDRESS", "94:A9:90:6A:CC:E2") # Known Sensor MAC
 SERVICE_UUID = os.getenv("SERVICE_UUID", "4fafc201-1fb5-459e-8fcc-c5c9c331914b")
 CHARACTERISTIC_UUID = os.getenv("CHARACTERISTIC_UUID", "beb5483e-36e1-4688-b7f5-ea07361b26a8")
 

@@ -4,12 +4,9 @@ import logging
 from queue import Queue
 from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
-from src.ui import render_sidebar, render_connection_view, render_collection_view
+from src.ui import render_sidebar, render_connection_view, render_collection_view, init_session_state
 
-# 로깅 설정
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
+# Early initialization of session state to load models
 # --- 1. 페이지 설정 ---
 st.set_page_config(
     page_title="Data Logger Dashboard",
@@ -18,34 +15,13 @@ st.set_page_config(
 )
 
 # --- 2. 세션 상태 초기화 ---
-if 'view' not in st.session_state:
-    # If already connected (cached manager), go straight to collection
-    # We need to access manager first to check
-    # But manager init happens below. Let's do view init after manager init?
-    # Or just default 'connection' and flip it later.
-    st.session_state.view = 'connection'
-if 'collection_state' not in st.session_state:
-    st.session_state.collection_state = 'ready'
-if 'log_buffer' not in st.session_state:
-    st.session_state.log_buffer = []
-if 'is_logging' not in st.session_state:
-    st.session_state.is_logging = False
-if 'queue_overflow_count' not in st.session_state:
-    st.session_state.queue_overflow_count = 0
+# Early initialization of session state to load models and check connection
+# This will now set up 'ble_manager' using cache and auto-recover 'view'
+init_session_state()
 
-@st.cache_resource
-def get_manager():
-    logger.info("Initializing RealBLEManager (Cached)")
-    return RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
-
-if 'ble_manager' not in st.session_state:
-    st.session_state.ble_manager = get_manager()
-    st.session_state.data_queue = st.session_state.ble_manager.data_queue
-    
-    # Check if already connected (e.g. after refresh)
-    if st.session_state.ble_manager.connected:
-        st.session_state.view = 'collection'
-        st.info("🔄 기존 연결을 복구했습니다.")
+# --- 3. 로깅 설정 --
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 연결 해제 콜백 정의
 def disconnect():
@@ -106,6 +82,11 @@ def scan_and_connect():
 
 # --- 5. UI 렌더링 ---
 render_sidebar()
+
+# Fallback safety check
+if 'view' not in st.session_state:
+    print("WARNING: 'view' was missing in session_state. Forcing initialization.")
+    st.session_state.view = 'connection'
 
 if st.session_state.view == 'connection':
     render_connection_view(scan_and_connect)

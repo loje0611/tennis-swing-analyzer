@@ -4,8 +4,17 @@ import subprocess
 import pandas as pd
 from collections import deque
 from datetime import datetime
+from queue import Queue
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
+from src.ble_manager import RealBLEManager
+
+# Edge Impulse Import
+try:
+    from edge_impulse_linux.runner import ImpulseRunner
+except ImportError:
+    ImpulseRunner = None
+    print("Edge Impulse Library not found")
 
 # Try to import fragment (Streamlit 1.37+)
 try:
@@ -18,8 +27,40 @@ except ImportError:
 
 # Visualization buffer size
 VIS_BUFFER_SIZE = 200
+# Inference settings
+# FIX: Reduced from 100 to 50 to match model input shape (300 features / 6 axes = 50 samples)
+INFERENCE_WINDOW_SIZE = 50  # 1000ms at 50Hz
+MODEL_PATH = "/home/keunu/tennis-swing-analyzer/model.eim"
+
+# --- 1. 연결 객체 영속화 (Global Singleton) ---
+@st.cache_resource
+def get_cached_ble_manager():
+    """
+    RealBLEManager를 캐싱하여 세션 리로드 후에도 연결 객체를 유지.
+    """
+    print("Initializing RealBLEManager (Cached)")
+    return RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
 
 def init_session_state():
+    # --- 2. UI 상태 자동 복구 (Auto-Recovery) ---
+    # 가장 먼저 매니저를 가져옴
+    if 'ble_manager' not in st.session_state:
+        st.session_state.ble_manager = get_cached_ble_manager()
+        st.session_state.data_queue = st.session_state.ble_manager.data_queue
+
+    # 매니저가 이미 연결된 상태라면 -> 즉시 콜렉션 뷰로 복구
+    if st.session_state.ble_manager.connected:
+        if 'view' not in st.session_state or st.session_state.view != 'collection':
+            st.session_state.view = 'collection'
+            st.toast("🔄 기존 연결을 복구했습니다 (Auto-Recovered)", icon="🔗")
+            # 필요 시 데이터 로깅 상태 등은 여기서 리셋하거나 유지 정책 결정
+            # 여기서는 안전하게 로깅은 False로 시작
+            st.session_state.is_logging = False
+
+    # 기본 세션 초기화
+    if 'view' not in st.session_state:
+        st.session_state.view = 'connection'
+
     if 'vis_buffer' not in st.session_state:
         st.session_state.vis_buffer = deque(maxlen=VIS_BUFFER_SIZE)
     if 'log_buffer' not in st.session_state:
@@ -36,11 +77,51 @@ def init_session_state():
         st.session_state.last_data_time = datetime.now()
     if 'show_save_confirm' not in st.session_state:
         st.session_state.show_save_confirm = False
+    
+    # AI Model State
+    if 'runner' not in st.session_state:
+        st.session_state.runner = None
+        st.session_state.model_info = None
+        st.session_state.model_load_error = None
+        
+        if ImpulseRunner:
+            try:
+                runner = ImpulseRunner(MODEL_PATH)
+                model_info = runner.init()
+                st.session_state.runner = runner
+                st.session_state.model_info = model_info
+                print(f"Model loaded: {model_info['project']['owner']} / {model_info['project']['name']}")
+            except Exception as e:
+                print(f"Failed to load model: {e}")
+                st.session_state.model_load_error = str(e)
+
+    if 'inference_buffer' not in st.session_state:
+        st.session_state.inference_buffer = deque(maxlen=INFERENCE_WINDOW_SIZE)
+        
+    if 'inference_result' not in st.session_state:
+        st.session_state.inference_result = {"label": "Initializing...", "score": 0.0}
 
 def render_sidebar():
     with st.sidebar:
         st.title("⚙️ 설정")
         
+        # Model Status
+        if st.session_state.get('runner'):
+            # Model loaded successfully
+            st.success(f"🧠 AI 모델 로드됨")
+        elif st.session_state.get('model_load_error'):
+            # Model load failed
+            st.error(f"❌ 모델 오류: {st.session_state.model_load_error}")
+        else:
+            # Not loaded yet or Library missing
+            if ImpulseRunner is None:
+                 st.warning("⚠️ Edge Impulse 라이브러리 부재")
+            elif 'runner' not in st.session_state:
+                 st.info("⏳ AI 모델 준비 중...")
+            else:
+                 # Library exists, keys exist, but runner is None and no error?
+                 st.warning("⚠️ 모델 파일 없음 or 초기화 실패")
+
         status_text = "⚪ 센서 미연결"
         if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
             if st.session_state.is_logging:
@@ -71,9 +152,21 @@ def render_sidebar():
                  st.warning(f"⚠️ 큐 오버플로우: {overflow}회")
         
         if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
+             # Regular Disconnect
              if st.button("연결 해제", type="secondary"):
                 if 'disconnect_func' in st.session_state:
                     st.session_state.disconnect_func()
+        
+        # --- 3. 강제 연결 해제 버튼 (Emergency) ---
+        st.markdown("---")
+        with st.expander("🛠️ 문제 해결 (Troubleshooting)"):
+            st.caption("화면이 멈추거나 연결이 꼬였을 때 사용하세요.")
+            if st.button("🔄 블루투스 리셋 (Hard Reset)", type="primary"):
+                st.cache_resource.clear()
+                # Stop existing manager if possible
+                if st.session_state.get('ble_manager'):
+                     st.session_state.ble_manager.stop()
+                st.rerun()
 
         st.markdown("---")
 
@@ -208,13 +301,52 @@ def process_data_queue():
         if items:
             # Update last data time
             st.session_state.last_data_time = datetime.now()
+            print(f"DEBUG: Processed {len(items)} items. Buffer size: {len(st.session_state.inference_buffer)}")
             
-            # Visualization Buffer (Extend)
+            # Visualization buffer
             st.session_state.vis_buffer.extend(items)
             
             if st.session_state.is_logging:
                 st.session_state.log_buffer.extend(items)
             
+            # Inference Buffer & Logic
+            if st.session_state.get('runner'):
+                for item in items:
+                    # Append 6 axes in order: ax, ay, az, gx, gy, gz
+                    st.session_state.inference_buffer.append([
+                        item['accel_x'], item['accel_y'], item['accel_z'],
+                        item['gyro_x'], item['gyro_y'], item['gyro_z']
+                    ])
+                
+                # Run inference if we have enough data
+                if len(st.session_state.inference_buffer) == INFERENCE_WINDOW_SIZE:
+                    # Flatten the data for Edge Impulse
+                    features = []
+                    for sample in st.session_state.inference_buffer:
+                        features.extend(sample)
+                    
+                    try:
+                        # print(f"DEBUG: Running inference on {len(features)} features")
+                        res = st.session_state.runner.classify(features)
+                        
+                        # Debugging: Print result randomly or periodically?
+                        # Let's print only if score > 0.5 or every 10th time? 
+                        # For now, just print everything to log
+                        print(f"DEBUG: Inference Result: {res['result']}")
+
+                        # res['result']['classification'] is a dict like {'label': score, ...}
+                        if 'result' in res and 'classification' in res['result']:
+                            classifications = res['result']['classification']
+                            best_label = max(classifications, key=classifications.get)
+                            best_score = classifications[best_label]
+                            
+                            st.session_state.inference_result = {
+                                "label": best_label,
+                                "score": best_score
+                            }
+                    except Exception as e:
+                        print(f"Inference error: {e}")
+
             # Reset overflow count since we are consuming data
             if st.session_state.get('ble_manager'):
                 st.session_state.ble_manager.queue_overflow_count = 0
@@ -226,6 +358,43 @@ if fragment:
     def render_live_dashboard():
         process_data_queue()
         
+        # --- Inference Result Display ---
+        if 'inference_result' in st.session_state:
+            result = st.session_state.inference_result
+            label = result['label']
+            score = result['score']
+            
+            # Display logic
+            display_text = "..."
+            display_color = "#999999"  # Gray (default/idle/low confidence)
+            
+            if score >= 0.7:
+                display_text = label
+                if label == "Forehand":
+                    display_color = "#28a745"  # Green
+                elif label == "Backhand":
+                    display_color = "#007bff"  # Blue
+                elif label == "Idle":
+                    display_color = "#6c757d"  # Gray
+            else:
+                 display_text = "분석 중..."
+            
+            st.markdown(
+                f"""
+                <div style="
+                    text-align: center; 
+                    background-color: {display_color}22; 
+                    padding: 20px; 
+                    border-radius: 10px; 
+                    border: 2px solid {display_color};
+                    margin-bottom: 20px;">
+                    <h3 style="margin: 0; color: {display_color};">Swing Analysis</h3>
+                    <h1 style="margin: 0; font-size: 60px; color: {display_color}; font-weight: bold;">{display_text}</h1>
+                    <p style="margin: 0; color: #666;">Confidence: {score*100:.1f}%</p>
+                </div>
+                """
+            , unsafe_allow_html=True)
+            
         # --- Logging Control (Moved inside fragment for real-time updates) ---
         col_log1, col_log2 = st.columns([2, 1])
         with col_log1:
@@ -237,6 +406,7 @@ if fragment:
                         if st.button("✅ 저장 (Save)", type="primary", use_container_width=True):
                              save_and_stop()
                     with c_discard:
+                         st.markdown("") # Add spacing
                          if st.button("🗑️ 폐기 (Discard)", type="secondary", use_container_width=True):
                              discard_and_stop()
                 else:
@@ -251,7 +421,7 @@ if fragment:
                 st.markdown(f"**수집된 데이터:** {len(st.session_state.log_buffer)} 개")
             else:
                 st.markdown("**대기 중...**")
-
+        
         st.markdown("---")
 
         # --- Sensor Status Check (Switch OFF?) ---
@@ -294,6 +464,13 @@ else:
     def render_live_dashboard():
         process_data_queue()
         
+        # --- Inference Result Display (Fallback) ---
+        if 'inference_result' in st.session_state:
+            result = st.session_state.inference_result
+            st.metric("AI Analysis", f"{result['label']} ({result['score']*100:.0f}%)")
+
+        st.markdown("---")
+        
         # --- Logging Control ---
         col_log1, col_log2 = st.columns([2, 1])
         with col_log1:
@@ -312,7 +489,7 @@ else:
                          confirm_stop_logging()
             else:
                  if st.button("🔴 파일 저장 시작 (Start Logging)", use_container_width=True):
-                     start_logging()
+                      start_logging()
         
         with col_log2:
             if st.session_state.is_logging:
@@ -356,7 +533,7 @@ def start_logging():
     st.session_state.log_buffer = []
     st.session_state.show_save_confirm = False
     pass 
-
+    
 def confirm_stop_logging():
     st.session_state.show_save_confirm = True
 
