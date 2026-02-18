@@ -3,3 +3,4 @@ bleak>=0.21.0
 edge-impulse-linux>=1.0.9
 PyAudio>=0.2.11
 opencv-python>=4.5.1.48,<5
+plotly>=5.18.0

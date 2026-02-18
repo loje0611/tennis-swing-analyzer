@@ -9,6 +9,8 @@ from queue import Queue
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
 from src.ble_manager import RealBLEManager
+import math
+import plotly.graph_objects as go
 
 # Edge Impulse Import
 try:
@@ -57,6 +59,7 @@ def init_session_state():
     if 'collection_state' not in st.session_state: st.session_state.collection_state = 'ready'
     if 'main_category' not in st.session_state: st.session_state.main_category = 'Forehand'
     if 'sub_category' not in st.session_state: st.session_state.sub_category = 'Flat'
+    if 'active_page' not in st.session_state: st.session_state.active_page = '🔥 Live Coaching'
     if 'last_data_time' not in st.session_state: st.session_state.last_data_time = datetime.now()
     if 'show_save_confirm' not in st.session_state: st.session_state.show_save_confirm = False
     
@@ -65,6 +68,22 @@ def init_session_state():
     if 'swing_count_bh' not in st.session_state: st.session_state.swing_count_bh = 0
     if 'last_predicted_label' not in st.session_state: st.session_state.last_predicted_label = "Idle"
     if 'current_power' not in st.session_state: st.session_state.current_power = 0.0
+
+    # Speed Measurement State
+    if 'peak_speed_2s' not in st.session_state: st.session_state.peak_speed_2s = 0.0
+    if 'speed_history' not in st.session_state: st.session_state.speed_history = deque()
+    if 'last_swing_speed' not in st.session_state: st.session_state.last_swing_speed = 0.0
+    if 'current_speed_kmh' not in st.session_state: st.session_state.current_speed_kmh = 0.0
+
+    # Last Swing Retention
+    if 'last_swing_type' not in st.session_state: st.session_state.last_swing_type = "Ready"
+
+    # Gauge Flickering Prevention
+    if 'last_gauge_value' not in st.session_state: st.session_state.last_gauge_value = 0.0
+    if 'force_gauge_update' not in st.session_state: st.session_state.force_gauge_update = False
+
+    # Recent Shots History (last 5)
+    if 'recent_shots' not in st.session_state: st.session_state.recent_shots = deque(maxlen=5)
 
     # AI Model State
     if 'runner' not in st.session_state:
@@ -102,23 +121,51 @@ def styles():
             font-weight: 700;
         }
         
-        /* Big Result Card */
-        .result-card {
-            border-radius: 15px;
-            padding: 20px;
+        /* Big Swing Card */
+        .swing-card {
+            border-radius: 20px;
+            padding: 40px 20px;
             text-align: center;
             margin-bottom: 20px;
             color: white;
             transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
         }
-        .result-fh { background-color: #28a745; border: 4px solid #1e7e34; }
-        .result-bh { background-color: #007bff; border: 4px solid #0056b3; }
-        .result-idle { background-color: #343a40; border: 4px solid #23272b; }
+        .swing-fh { 
+            background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%); 
+            border: 4px solid #1e7e34; 
+        }
+        .swing-bh { 
+            background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); 
+            border: 4px solid #0056b3; 
+        }
+        .swing-ready { 
+            background: linear-gradient(135deg, #343a40 0%, #23272b 100%); 
+            border: 4px solid #23272b; 
+        }
         
-        .result-title { font-size: 1.5rem; opacity: 0.8; margin: 0; }
-        .result-label { font-size: 5rem; font-weight: 900; margin: 10px 0; line-height: 1.1; }
-        .result-score { font-size: 1.2rem; opacity: 0.9; }
-        
+        .swing-title { font-size: 2rem; opacity: 0.9; margin: 0; font-weight: 500; letter-spacing: 1px; }
+        .swing-label { font-size: 6rem; font-weight: 900; margin: 10px 0; line-height: 1.0; text-transform: uppercase; }
+        .swing-speed { font-size: 2.5rem; font-weight: 700; background: rgba(0,0,0,0.2); padding: 5px 20px; border-radius: 10px; display: inline-block; margin-top: 15px; }
+
+        /* Status Text Colors */
+        .swing-label-ready { color: #888888; }
+        .swing-label-fh { color: #00CC66; }
+        .swing-label-bh { color: #3366FF; }
+
+        /* Recent Shots Badges */
+        .shot-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 1rem;
+            margin: 4px;
+            color: white;
+        }
+        .shot-badge-fh { background: linear-gradient(135deg, #28a745, #1e7e34); }
+        .shot-badge-bh { background: linear-gradient(135deg, #007bff, #0056b3); }
+
         /* Tabs Styling */
         .stTabs [data-baseweb="tab-list"] {
             gap: 20px;
@@ -138,9 +185,26 @@ def styles():
             color: white !important;
         }
         
-        /* Sidebar */
-        section[data-testid="stSidebar"] {
-            background-color: #111;
+        /* Sidebar — theme-aware */
+        @media (prefers-color-scheme: light) {
+            section[data-testid="stSidebar"] {
+                background-color: #f5f5f5;
+                color: #222;
+            }
+            section[data-testid="stSidebar"] h1,
+            section[data-testid="stSidebar"] h2,
+            section[data-testid="stSidebar"] h3,
+            section[data-testid="stSidebar"] p,
+            section[data-testid="stSidebar"] span,
+            section[data-testid="stSidebar"] label {
+                color: #222 !important;
+            }
+        }
+        @media (prefers-color-scheme: dark) {
+            section[data-testid="stSidebar"] {
+                background-color: #111;
+                color: #eee;
+            }
         }
         
         </style>
@@ -155,16 +219,6 @@ def render_sidebar():
         if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
             st.success("🟢 Connected")
             
-            # Virtual Battery (Random for now)
-            try:
-                # battery usually between 3.3V and 4.2V, map to %?
-                # Just mock it: 84%
-                bat_level = 84 
-                st.markdown(f"**🔋 Battery:** {bat_level}%")
-                st.progress(bat_level / 100)
-            except:
-                pass
-                
             if st.button("Disconnect", type="secondary"):
                 if 'disconnect_func' in st.session_state:
                     st.session_state.disconnect_func()
@@ -172,8 +226,18 @@ def render_sidebar():
             st.error("⚪ Disconnected")
             
         st.markdown("---")
+
+        # 2. Page Navigation
+        st.session_state.active_page = st.radio(
+            "📋 Menu",
+            ["🔥 Live Coaching", "💾 Data Logger"],
+            index=0 if st.session_state.active_page == "🔥 Live Coaching" else 1,
+            key="nav_radio"
+        )
         
-        # 2. System Settings
+        st.markdown("---")
+        
+        # 3. System Settings
         with st.expander("🛠️ Settings & WiFi"):
             # Queue Status
             if 'data_queue' in st.session_state:
@@ -183,7 +247,6 @@ def render_sidebar():
             # Smart WiFi 
             if st.button("WiFi Scan"):
                  st.info("Scanning...")
-                 # (WiFi Scan Logic skipped for brevity, keeping existing structure if needed, or simplified)
                  pass 
 
             # Hard Reset
@@ -215,7 +278,7 @@ def render_connection_view(scan_callback):
         st.caption(f"Looking for Service UUID: {SERVICE_UUID}")
 
 def process_data_queue():
-    """Fetch data from queue, calculate power, and count swings."""
+    """Fetch data from queue, calculate speed, and count swings."""
     if 'data_queue' in st.session_state:
         q = st.session_state.data_queue
         
@@ -234,15 +297,29 @@ def process_data_queue():
         if items:
             st.session_state.last_data_time = datetime.now()
             
-            # --- Power Calculation (using last item) ---
+            # --- Speed Calculation (Physics) ---
+            # V = r * omega (r = 0.5m)
             last_item = items[-1]
-            ax, ay, az = last_item['accel_x'], last_item['accel_y'], last_item['accel_z']
-            # Simple vector sum magnitude - gravity(1.0) approx
-            # power = sqrt(x^2 + y^2 + z^2)
-            power_g = np.sqrt(ax**2 + ay**2 + az**2)
+            gx, gy, gz = last_item['gyro_x'], last_item['gyro_y'], last_item['gyro_z']
+            gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2) # deg/s
+            rad_s = math.radians(gyro_mag)
+            v_mps = 0.5 * rad_s
+            v_kmh = v_mps * 3.6
+            st.session_state.current_speed_kmh = v_kmh
+
+            # --- Peak Speed History (2s Window) for Gauge Display ---
+            now = datetime.now()
+            st.session_state.speed_history.append((now, v_kmh))
             
-            # Smoothing could be applied here preferably
-            st.session_state.current_power = power_g
+            # Remove old data (> 2.0s)
+            while st.session_state.speed_history and (now - st.session_state.speed_history[0][0]).total_seconds() > 2.0:
+                st.session_state.speed_history.popleft()
+            
+            # Update Peak Speed (for Gauge)
+            if st.session_state.speed_history:
+                st.session_state.peak_speed_2s = max(s[1] for s in st.session_state.speed_history)
+            else:
+                st.session_state.peak_speed_2s = 0.0
 
             # --- Buffer Updates ---
             st.session_state.vis_buffer.extend(items)
@@ -269,23 +346,34 @@ def process_data_queue():
                             best_label = max(classifications, key=classifications.get)
                             best_score = classifications[best_label]
                             
-                            # Update result
+                            # Update raw inference result
                             st.session_state.inference_result = {
                                 "label": best_label,
                                 "score": best_score
                             }
 
-                            # --- Swing Counting Logic ---
-                            # Logic: If we transition FROM Idle TO Forehand/Backhand with High Confidence
-                            # AND we haven't counted it recently (simple debounce logic needed in real app, but here simple transition)
+                            # --- Swing Counting & Max Speed Capture Logic ---
+                            # Logic: Transition FROM Idle TO Forehand/Backhand
                             current_label = best_label if best_score > 0.75 else "Idle"
                             prev_label = st.session_state.last_predicted_label
                             
                             if current_label != prev_label:
                                 if current_label == "Forehand" and prev_label != "Forehand":
                                     st.session_state.swing_count_fh += 1
+                                    st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                    st.session_state.last_swing_type = "Forehand"
+                                    st.session_state.force_gauge_update = True
+                                    st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
+                                    
                                 elif current_label == "Backhand" and prev_label != "Backhand":
                                     st.session_state.swing_count_bh += 1
+                                    st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                    st.session_state.last_swing_type = "Backhand"
+                                    st.session_state.force_gauge_update = True
+                                    st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
+                                
+                                # Do NOT update last_swing_type if shifting back to Idle
+                                # This ensures the UI "Retains" the last valid swing
                                 
                                 st.session_state.last_predicted_label = current_label
 
@@ -301,68 +389,117 @@ if fragment:
     def render_live_metrics():
         process_data_queue()
         
-        # 1. Result Card
-        result = st.session_state.inference_result
-        label = result['label']
-        score = result['score']
+        # Display Logic: Use "Last Swing Retention"
+        swing_type = st.session_state.last_swing_type  # "Ready", "Forehand", "Backhand"
+        swing_speed = st.session_state.last_swing_speed
         
-        display_class = "result-idle"
-        display_text = "Ready"
+        display_class = "swing-ready"
+        label_color_class = "swing-label-ready"
+        if swing_type == "Forehand":
+            display_class = "swing-fh"
+            label_color_class = "swing-label-fh"
+        elif swing_type == "Backhand":
+            display_class = "swing-bh"
+            label_color_class = "swing-label-bh"
         
-        if score > 0.7:
-            display_text = label.upper()
-            if label == "Forehand": display_class = "result-fh"
-            elif label == "Backhand": display_class = "result-bh"
-        else:
-            display_text = "..."
-
+        display_text = swing_type.upper()
+        
+        # 1. Main Swing Card (with colored label text)
         st.markdown(f"""
-            <div class="result-card {display_class}">
-                <p class="result-title">AI Analysis</p>
-                <h1 class="result-label">{display_text}</h1>
-                <p class="result-score">Confidence: {score*100:.0f}%</p>
+            <div class="swing-card {display_class}">
+                <p class="swing-title">LAST DETECTED SWING</p>
+                <h1 class="swing-label {label_color_class}">{display_text}</h1>
+                <div class="swing-speed">{swing_speed:.1f} km/h</div>
             </div>
         """, unsafe_allow_html=True)
 
-        # 2. Swing Counters
+        # 2. Speed Gauge (Stable render — no st.empty() to avoid flicker)
+        display_speed = st.session_state.peak_speed_2s
+        
+        should_update = (
+            abs(display_speed - st.session_state.last_gauge_value) >= 1.0
+            or st.session_state.force_gauge_update
+        )
+        
+        if should_update:
+            st.session_state.last_gauge_value = display_speed
+            st.session_state.force_gauge_update = False
+        
+        render_speed = st.session_state.last_gauge_value
+        
+        fig = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = render_speed,
+            number = {'font': {'size': 48, 'color': 'white'}, 'suffix': ' km/h'},
+            domain = {'x': [0, 1], 'y': [0, 1]},
+            title = {'text': "⚡ SWING SPEED", 'font': {'size': 16, 'color': '#aaa'}},
+            gauge = {
+                'axis': {
+                    'range': [0, 150],
+                    'tickwidth': 2,
+                    'tickcolor': '#666',
+                    'dtick': 30,
+                    'tickfont': {'size': 12, 'color': '#888'}
+                },
+                'bar': {'color': "#ff4b4b", 'thickness': 0.35},
+                'bgcolor': '#1a1a1a',
+                'borderwidth': 2,
+                'bordercolor': '#333',
+                'steps': [
+                    {'range': [0, 50], 'color': '#1a3a1a'},
+                    {'range': [50, 80], 'color': '#2a4a1a'},
+                    {'range': [80, 110], 'color': '#4a4a0a'},
+                    {'range': [110, 130], 'color': '#4a2a0a'},
+                    {'range': [130, 150], 'color': '#4a1a1a'}
+                ],
+                'threshold': {
+                    'line': {'color': "#ff0040", 'width': 5},
+                    'thickness': 0.8,
+                    'value': render_speed
+                }
+            }
+        ))
+        fig.update_layout(
+            height=220,
+            margin=dict(l=25, r=25, t=40, b=15),
+            paper_bgcolor="rgba(0,0,0,0)",
+            font={'color': "white"}
+        )
+        st.plotly_chart(fig, use_container_width=True, key="speed_gauge")
+
+        # 3. Recent Shots History (Badges)
+        if st.session_state.recent_shots:
+            shots_html = '<div style="text-align:center; margin: 10px 0 20px 0;">'
+            shots_html += '<p style="color:#888; font-size:0.9rem; margin-bottom:8px;">📜 RECENT SHOTS</p>'
+            for shot_type, shot_speed in st.session_state.recent_shots:
+                badge_class = "shot-badge-fh" if shot_type == "FH" else "shot-badge-bh"
+                shots_html += f'<span class="shot-badge {badge_class}">{shot_type} {shot_speed:.0f}km</span>'
+            shots_html += '</div>'
+            st.markdown(shots_html, unsafe_allow_html=True)
+
+        # 4. Swing Counters
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f"""
-                <div style="background:#1e3a29; border-left: 5px solid #28a745; padding:15px; border-radius:5px;">
-                    <span style="color:#aaa;">Forehand</span>
-                    <div style="font-size:2.5rem; font-weight:bold; color:white;">{st.session_state.swing_count_fh}</div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.metric("Forehand Count", st.session_state.swing_count_fh)
         with c2:
-            st.markdown(f"""
-                <div style="background:#192e47; border-left: 5px solid #007bff; padding:15px; border-radius:5px;">
-                    <span style="color:#aaa;">Backhand</span>
-                    <div style="font-size:2.5rem; font-weight:bold; color:white;">{st.session_state.swing_count_bh}</div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.metric("Backhand Count", st.session_state.swing_count_bh)
 
-        # 3. Power Meter
-        st.markdown("### Swing Power (G)")
-        power = st.session_state.current_power
-        # Normalize roughly: 1G is rest, 5G is very strong
-        progress_val = min(max((power - 1.0) / 4.0, 0.0), 1.0) 
-        st.progress(progress_val)
-        st.caption(f"Current Impact: {power:.2f} G")
-        
-        # 4. Status Warning
+        # 5. Status Warning
         time_since_last = (datetime.now() - st.session_state.get('last_data_time', datetime.now())).total_seconds()
         if time_since_last > 2.0:
             st.warning("⚠️ No data from sensor (Sleeping?)")
 
     @fragment(run_every=0.5)
     def render_logger_tab():
-        # Update data occasionally
-        # process_data_queue() # Already called in live metrics if visible? 
-        # Actually tabs might hide elements. We should ensure process_data_queue is called.
-        # But @fragment run_every might conflict if multiple are running. 
-        # Let's assume user stays on one tab. 
-        # Safest is to call process_data_queue here too, relying on the queue handling (it drains queue).
         process_data_queue()
+
+        # Header: Labeling Settings (Moved here)
+        with st.expander("🏷️ Labeling Settings", expanded=True):
+             c1, c2 = st.columns(2)
+             with c1:
+                  st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_log")
+             with c2:
+                  st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
 
         col_ctrl, col_info = st.columns([2, 1])
         with col_ctrl:
@@ -404,21 +541,10 @@ def render_collection_view():
     init_session_state()
     styles()
     
-    # Header area for labeling (Always visible)
-    with st.expander("🏷️ Labeling Settings", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
-             st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_top")
-        with c2:
-             st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_top")
-
-    # Main Tabs
-    tab_live, tab_log = st.tabs(["🎾 Live Coaching", "💾 Data Logger"])
-
-    with tab_live:
+    # Render active page based on sidebar selection
+    if st.session_state.active_page == "🔥 Live Coaching":
         render_live_metrics()
-    
-    with tab_log:
+    else:
         render_logger_tab()
 
 # --- Helper Functions ---
