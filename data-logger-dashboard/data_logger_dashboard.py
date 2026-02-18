@@ -4,7 +4,8 @@ import logging
 from queue import Queue
 from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
-from src.ui import render_sidebar, render_connection_view, render_collection_view, init_session_state
+from src.ui import render_sidebar, render_connection_view, render_collection_view
+from src.state import init_session_state
 
 # Early initialization of session state to load models
 # --- 1. 페이지 설정 ---
