@@ -66,8 +66,8 @@ class RealBLEManager(BLEManager):
                 print(f"DEBUG_SCAN: {log_entry}") # Console Output
 
                 # 2. 필터링 로직 (이름 기반 Priority)
-                # 조건 1: 이름이 "Tennis_Swing_Master"와 일치
-                if name == "Tennis_Swing_Master":
+                # 조건 1: 이름이 "Tennis_Sensor_V1"와 일치
+                if name == "Tennis_Sensor_V1":
                     target_device = device
                     logger.info(f"🎯 이름으로 디바이스 찾음: {name}")
                     break
@@ -86,7 +86,7 @@ class RealBLEManager(BLEManager):
             
             if not target_device:
                 logger.warning("스캔 결과 (상세):\n" + "\n".join(found_log))
-                return False, f"디바이스 'Tennis_Swing_Master'를 찾을 수 없습니다.\n(스캔된 장치: {len(devices_dict)}개)", None
+                return False, f"디바이스 'Tennis_Sensor_V1'를 찾을 수 없습니다.\n(스캔된 장치: {len(devices_dict)}개)", None
             
             return True, f"디바이스 발견: {target_device.name} [{target_device.address}]", target_device
             
@@ -158,12 +158,12 @@ class RealBLEManager(BLEManager):
                         }
                         try:
                             self.data_queue.put_nowait(data_point)
-                        except:
+                        except Exception:
                             try:
                                 self.data_queue.get_nowait()
                                 self.data_queue.put_nowait(data_point)
                                 self.queue_overflow_count += 1
-                            except:
+                            except Exception:
                                 pass
                 except Exception as e:
                     logger.warning(f"데이터 파싱 오류: {e}")
@@ -179,7 +179,7 @@ class RealBLEManager(BLEManager):
             if self.client.is_connected:
                 try:
                     await self.client.stop_notify(CHARACTERISTIC_UUID)
-                except: pass
+                except Exception: pass
                 await self.client.disconnect()
             
         except Exception as e:

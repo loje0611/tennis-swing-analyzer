@@ -29,7 +29,6 @@ def disconnect():
         st.session_state.ble_manager.stop()
     st.session_state.view = 'connection'
     st.session_state.collection_state = 'ready'
-    st.session_state.collection_state = 'ready'
     st.session_state.log_buffer = []
     st.session_state.is_logging = False
     if 'vis_buffer' in st.session_state:

@@ -286,13 +286,13 @@ def process_data_queue():
         if not st.session_state.is_logging and q.qsize() > 1000:
             while not q.empty():
                 try: q.get_nowait()
-                except: break
+                except Exception: break
             return
 
         items = []
         while not q.empty():
             try: items.append(q.get_nowait())
-            except: break
+            except Exception: break
         
         if items:
             st.session_state.last_data_time = datetime.now()
