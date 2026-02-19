@@ -42,7 +42,13 @@ def render_sidebar():
             
         st.markdown("---")
 
-        # 2. AI Model Status
+        # 2. TTS Audio Control
+        st.markdown("### 🔊 Audio")
+        render_tts_audio_button()
+        
+        st.markdown("---")
+
+        # 3. AI Model Status
         st.markdown("### 🤖 AI Model")
         if st.session_state.get('model_load_error'):
             st.warning(f"⚠️ Error: {st.session_state.model_load_error}")
@@ -63,7 +69,7 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # 3. System Settings
+        # 4. System Settings
         with st.expander("🛠️ Settings & WiFi"):
             # Queue Status
             if 'data_queue' in st.session_state:
@@ -250,6 +256,11 @@ if fragment:
              with c2:
                   st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
 
+        # Debug Info
+        if 'last_max_mag' in st.session_state:
+             time_diff = datetime.now().timestamp() - st.session_state.get('last_peak_time', 0)
+             st.caption(f"Max Mag: {st.session_state.last_max_mag:.2f} G (Thresh: 5.0) | Time since peak: {time_diff:.1f}s")
+             
         col_ctrl, col_info = st.columns([2, 1])
         with col_ctrl:
             if not st.session_state.is_logging:
@@ -281,6 +292,17 @@ if fragment:
             st.caption("Gyroscope (X, Y, Z)")
             st.line_chart(df[['gyro_x', 'gyro_y', 'gyro_z']], height=200)
 
+        # TTS Speaker (client-side speech synthesis)
+        if st.session_state.get('tts_enabled', False):
+            swing_id = st.session_state.get('tts_swing_id', '')
+            last_spoken = st.session_state.get('tts_last_spoken_id', '')
+            if swing_id and swing_id != last_spoken:
+                render_tts_speaker(
+                    st.session_state.get('tts_message', ''),
+                    swing_id
+                )
+                st.session_state.tts_last_spoken_id = swing_id
+
 else:
     # Fallback for old streamlit
     def render_live_metrics(): st.error("Update Streamlit for Live features")
@@ -290,9 +312,6 @@ def render_collection_view():
     init_session_state()
     styles()
 
-    # TTS Audio Activation Button (must be clicked once on mobile)
-    render_tts_audio_button()
-    
     # Render active page based on sidebar selection
     if st.session_state.active_page == "🔥 Live Coaching":
         render_live_metrics()
@@ -304,6 +323,21 @@ def start_logging():
     st.session_state.is_logging = True
     st.session_state.log_buffer = []
     st.session_state.show_save_confirm = False
+    
+    # TTS Announcement: Start Logging
+    import time
+    main = st.session_state.main_category
+    sub = st.session_state.sub_category
+    st.session_state.tts_message = f"{main} {sub}, 로깅을 시작합니다."
+    st.session_state.tts_swing_id = f"start_{time.time()}"
+    # Prevent premature "Next" by setting it to True initially
+    # It will be reset to False only after a valid peak is detected
+    st.session_state.pacing_guide_triggered = True 
+    st.session_state.last_peak_time = time.time()  # Reset cooldown
+    st.session_state.session_peak_count = 0
+    
+    # Visual Confirmation
+    st.toast(f"🔊 {st.session_state.tts_message}", icon="▶️")
 
 def confirm_stop_logging():
     st.session_state.show_save_confirm = True
@@ -311,6 +345,13 @@ def confirm_stop_logging():
 def save_and_stop():
     st.session_state.is_logging = False
     st.session_state.show_save_confirm = False
+    
+    # TTS Announcement: End Logging
+    import time
+    count = st.session_state.get('session_peak_count', 0)
+    st.session_state.tts_message = f"{count}회 스윙, 로깅을 종료합니다."
+    st.session_state.tts_swing_id = f"end_{time.time()}"
+    
     if st.session_state.log_buffer:
         try:
             fp = save_data_to_csv(st.session_state.log_buffer, st.session_state.main_category, st.session_state.sub_category)

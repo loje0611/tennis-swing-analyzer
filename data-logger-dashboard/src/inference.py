@@ -40,6 +40,42 @@ def process_data_queue():
     v_kmh = v_mps * 3.6
     st.session_state.current_speed_kmh = v_kmh
 
+    st.session_state.current_speed_kmh = v_kmh
+
+    # --- Data Logger Logic (Peak Detection & Pacing) ---
+    current_time = time.time()
+    
+    # 1. Peak Detection (> 5.0G, 1.5s cooldown) - INCREASED THRESHOLD
+    # Check if ANY sample in the batch exceeds the threshold
+    max_accel_mag = 0.0
+    for item in items:
+        mag = math.sqrt(item['accel_x']**2 + item['accel_y']**2 + item['accel_z']**2)
+        if mag > max_accel_mag:
+            max_accel_mag = mag
+            
+    # For Debugging
+    st.session_state.last_max_mag = max_accel_mag
+
+    if max_accel_mag >= 3.0:
+        if current_time - st.session_state.last_peak_time >= 1.5:
+            st.session_state.last_peak_time = current_time
+            st.session_state.pacing_guide_triggered = False
+            
+            # Count peaks for Data Logger session stats
+            if st.session_state.is_logging:
+                st.session_state.session_peak_count = st.session_state.get('session_peak_count', 0) + 1
+            
+            # Peak detected debugging
+            print(f"Peak Detected: {max_accel_mag:.2f} G")
+            
+    # 2. Pacing Assistant (2.0s after peak)
+    if st.session_state.is_logging:
+        if not st.session_state.pacing_guide_triggered:
+            if current_time - st.session_state.last_peak_time >= 2.0:
+                st.session_state.tts_message = "다음"
+                st.session_state.tts_swing_id = f"pace_{current_time}"
+                st.session_state.pacing_guide_triggered = True
+
     # --- Peak Speed History (2s Window) for Gauge Display ---
     now = datetime.now()
     st.session_state.speed_history.append((now, v_kmh))
@@ -96,10 +132,13 @@ def process_data_queue():
                             st.session_state.last_swing_type = "Forehand"
                             st.session_state.force_gauge_update = True
                             st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
-                            # TTS trigger
-                            speed = int(st.session_state.peak_speed_2s)
-                            st.session_state.tts_message = f"포핸드, {speed} 킬로미터"
-                            st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
+                            st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
+                            
+                            # TTS trigger (Live Coaching Only)
+                            if st.session_state.active_page == "🔥 Live Coaching":
+                                speed = int(st.session_state.peak_speed_2s)
+                                st.session_state.tts_message = f"포핸드, {speed} 킬로미터"
+                                st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
                             
                         elif current_label == "Backhand" and prev_label != "Backhand":
                             st.session_state.swing_count_bh += 1
@@ -107,10 +146,13 @@ def process_data_queue():
                             st.session_state.last_swing_type = "Backhand"
                             st.session_state.force_gauge_update = True
                             st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
-                            # TTS trigger
-                            speed = int(st.session_state.peak_speed_2s)
-                            st.session_state.tts_message = f"백핸드, {speed} 킬로미터"
-                            st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
+                            st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
+                            
+                            # TTS trigger (Live Coaching Only)
+                            if st.session_state.active_page == "🔥 Live Coaching":
+                                speed = int(st.session_state.peak_speed_2s)
+                                st.session_state.tts_message = f"백핸드, {speed} 킬로미터"
+                                st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
                         
                         # Do NOT update last_swing_type if shifting back to Idle
                         st.session_state.last_predicted_label = current_label

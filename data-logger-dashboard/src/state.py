@@ -77,6 +77,11 @@ def init_session_state():
     if 'tts_message' not in st.session_state: st.session_state.tts_message = ""
     if 'tts_swing_id' not in st.session_state: st.session_state.tts_swing_id = ""
     if 'tts_last_spoken_id' not in st.session_state: st.session_state.tts_last_spoken_id = ""
+    
+    # Data Logger TTS State
+    if 'last_peak_time' not in st.session_state: st.session_state.last_peak_time = 0.0
+    if 'pacing_guide_triggered' not in st.session_state: st.session_state.pacing_guide_triggered = False
+    if 'session_peak_count' not in st.session_state: st.session_state.session_peak_count = 0
 
     # AI Model State
     if 'runner' not in st.session_state:
