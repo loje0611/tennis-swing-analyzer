@@ -40,8 +40,6 @@ def process_data_queue():
     v_kmh = v_mps * 3.6
     st.session_state.current_speed_kmh = v_kmh
 
-    st.session_state.current_speed_kmh = v_kmh
-
     # --- Data Logger Logic (Peak Detection & Pacing) ---
     current_time = time.time()
     
@@ -132,7 +130,6 @@ def process_data_queue():
                             st.session_state.last_swing_type = "Forehand"
                             st.session_state.force_gauge_update = True
                             st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
-                            st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
                             
                             # TTS trigger (Live Coaching Only)
                             if st.session_state.active_page == "🔥 Live Coaching":
@@ -145,7 +142,6 @@ def process_data_queue():
                             st.session_state.last_swing_speed = st.session_state.peak_speed_2s
                             st.session_state.last_swing_type = "Backhand"
                             st.session_state.force_gauge_update = True
-                            st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
                             st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
                             
                             # TTS trigger (Live Coaching Only)

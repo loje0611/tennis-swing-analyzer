@@ -256,10 +256,11 @@ if fragment:
              with c2:
                   st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
 
-        # Debug Info
-        if 'last_max_mag' in st.session_state:
-             time_diff = datetime.now().timestamp() - st.session_state.get('last_peak_time', 0)
-             st.caption(f"Max Mag: {st.session_state.last_max_mag:.2f} G (Thresh: 5.0) | Time since peak: {time_diff:.1f}s")
+        # Debug Info (Hidden by default)
+        with st.expander("🐞 Debug Metrics"):
+             if 'last_max_mag' in st.session_state:
+                  time_diff = datetime.now().timestamp() - st.session_state.get('last_peak_time', 0)
+                  st.caption(f"Max Mag: {st.session_state.last_max_mag:.2f} G (Thresh: 3.0) | Time since peak: {time_diff:.1f}s")
              
         col_ctrl, col_info = st.columns([2, 1])
         with col_ctrl:
@@ -358,11 +359,27 @@ def save_and_stop():
             st.toast(f"Saved: {fp}", icon="✅")
         except Exception as e:
             st.error(f"Error: {e}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+    
+    # Wait briefly for TTS to trigger before rerun
+    time.sleep(0.5)
     st.rerun()
 
 def discard_and_stop():
     st.session_state.is_logging = False
     st.session_state.show_save_confirm = False
     st.session_state.log_buffer = []
+    st.session_state.log_buffer = []
+
+    # TTS Announcement: Discard Logging
+    import time
+    count = st.session_state.get('session_peak_count', 0)
+    st.session_state.tts_message = f"{count}회 스윙, 로깅을 취소합니다."
+    st.session_state.tts_swing_id = f"discard_{time.time()}"
+
     st.toast("Discarded", icon="🗑️")
+    
+    # Wait briefly for TTS to trigger before rerun
+    time.sleep(0.5)
     st.rerun()
