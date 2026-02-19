@@ -8,6 +8,7 @@ from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
 from src.styles import styles
 from src.state import init_session_state
+from src.tts import render_tts_audio_button, render_tts_speaker
 from src.inference import process_data_queue
 
 # Try to import fragment (Streamlit 1.37+)
@@ -226,6 +227,17 @@ if fragment:
             if time_since_last > 2.0:
                 st.warning("⚠️ No data from sensor (Sleeping?)")
 
+        # 6. TTS Speaker (client-side speech synthesis)
+        if st.session_state.get('tts_enabled', False):
+            swing_id = st.session_state.get('tts_swing_id', '')
+            last_spoken = st.session_state.get('tts_last_spoken_id', '')
+            if swing_id and swing_id != last_spoken:
+                render_tts_speaker(
+                    st.session_state.get('tts_message', ''),
+                    swing_id
+                )
+                st.session_state.tts_last_spoken_id = swing_id
+
     @fragment(run_every=0.5)
     def render_logger_tab():
         process_data_queue()
@@ -277,6 +289,9 @@ else:
 def render_collection_view():
     init_session_state()
     styles()
+
+    # TTS Audio Activation Button (must be clicked once on mobile)
+    render_tts_audio_button()
     
     # Render active page based on sidebar selection
     if st.session_state.active_page == "🔥 Live Coaching":

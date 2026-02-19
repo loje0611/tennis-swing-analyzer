@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import math
+import time
 from datetime import datetime
 from src.state import INFERENCE_WINDOW_SIZE
 
@@ -95,6 +96,10 @@ def process_data_queue():
                             st.session_state.last_swing_type = "Forehand"
                             st.session_state.force_gauge_update = True
                             st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
+                            # TTS trigger
+                            speed = int(st.session_state.peak_speed_2s)
+                            st.session_state.tts_message = f"포핸드, {speed} 킬로미터"
+                            st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
                             
                         elif current_label == "Backhand" and prev_label != "Backhand":
                             st.session_state.swing_count_bh += 1
@@ -102,6 +107,10 @@ def process_data_queue():
                             st.session_state.last_swing_type = "Backhand"
                             st.session_state.force_gauge_update = True
                             st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
+                            # TTS trigger
+                            speed = int(st.session_state.peak_speed_2s)
+                            st.session_state.tts_message = f"백핸드, {speed} 킬로미터"
+                            st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
                         
                         # Do NOT update last_swing_type if shifting back to Idle
                         st.session_state.last_predicted_label = current_label
