@@ -22,7 +22,12 @@ def process_data_queue():
 
     items = []
     while not q.empty():
-        try: items.append(q.get_nowait())
+        try:
+            item = q.get_nowait()
+            if st.session_state.get('is_logging', False):
+                start_time = st.session_state.get('logging_start_time', time.time())
+                item['timestamp_ms'] = int((time.time() - start_time) * 1000)
+            items.append(item)
         except Exception: break
     
     if not items:

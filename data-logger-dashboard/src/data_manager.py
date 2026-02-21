@@ -16,19 +16,19 @@ def save_data_to_csv(data: List[Dict], main_category: str, sub_category: str) ->
     
     # CSV 파일 작성
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['timestamp', 'accel_x', 'accel_y', 'accel_z', 'gyro_x', 'gyro_y', 'gyro_z']
+        fieldnames = ['timestamp', 'ax', 'ay', 'az', 'gx', 'gy', 'gz']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         
         for row in data:
             writer.writerow({
-                'timestamp': row['timestamp'].isoformat(),
-                'accel_x': row['accel_x'],
-                'accel_y': row['accel_y'],
-                'accel_z': row['accel_z'],
-                'gyro_x': row['gyro_x'],
-                'gyro_y': row['gyro_y'],
-                'gyro_z': row['gyro_z']
+                'timestamp': row.get('timestamp_ms', 0),
+                'ax': row['accel_x'],
+                'ay': row['accel_y'],
+                'az': row['accel_z'],
+                'gx': row['gyro_x'],
+                'gy': row['gyro_y'],
+                'gz': row['gyro_z']
             })
     
     return filepath
