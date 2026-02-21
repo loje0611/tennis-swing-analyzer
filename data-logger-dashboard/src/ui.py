@@ -327,7 +327,7 @@ def start_logging():
     
     # TTS Announcement: Start Logging
     import time
-    st.session_state.logging_start_time = time.time()
+    st.session_state.logging_packet_count = 0
     main = st.session_state.main_category
     sub = st.session_state.sub_category
     st.session_state.tts_message = f"{main} {sub}, 로깅을 시작합니다."

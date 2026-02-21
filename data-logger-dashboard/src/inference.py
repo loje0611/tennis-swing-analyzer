@@ -25,8 +25,9 @@ def process_data_queue():
         try:
             item = q.get_nowait()
             if st.session_state.get('is_logging', False):
-                start_time = st.session_state.get('logging_start_time', time.time())
-                item['timestamp_ms'] = int((time.time() - start_time) * 1000)
+                packet_count = st.session_state.get('logging_packet_count', 0)
+                item['timestamp_ms'] = packet_count * 20
+                st.session_state.logging_packet_count = packet_count + 1
             items.append(item)
         except Exception: break
     
