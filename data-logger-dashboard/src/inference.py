@@ -37,13 +37,16 @@ def process_data_queue():
     st.session_state.last_data_time = datetime.now()
     
     # --- Speed Calculation (Physics) ---
-    # V = r * omega (r = 0.5m)
+    RACKET_RADIUS_M = 1.1        # Effective radius of arm + racket
+    CALIBRATION_FACTOR = 1.2     # Calibration factor for air resistance etc.
+    
+    # V = r * omega
     last_item = items[-1]
     gx, gy, gz = last_item['gyro_x'], last_item['gyro_y'], last_item['gyro_z']
     gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)  # deg/s
     rad_s = math.radians(gyro_mag)
-    v_mps = 0.5 * rad_s
-    v_kmh = v_mps * 3.6
+    v_mps = RACKET_RADIUS_M * rad_s
+    v_kmh = v_mps * 3.6 * CALIBRATION_FACTOR
     st.session_state.current_speed_kmh = v_kmh
 
     # --- Data Logger Logic (Peak Detection & Pacing) ---
