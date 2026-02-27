@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from collections import deque
 from datetime import datetime
@@ -15,6 +16,7 @@ except ImportError:
 # Constants
 VIS_BUFFER_SIZE = 200
 INFERENCE_WINDOW_SIZE = 100  # 6 features * 100 = 600 length expected by model
+MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models")
 # MODEL_PATH is imported from src.config
 
 
@@ -23,6 +25,41 @@ def get_cached_ble_manager():
     """Connection Persistence — Global Singleton."""
     print("Initializing RealBLEManager (Cached)")
     return RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
+
+
+def load_model_safe(model_path):
+    """Safely unloads existing model if present, then loads the new model."""
+    if 'runner' in st.session_state and st.session_state.runner is not None:
+        try:
+            print("Stopping previous ImpulseRunner to free resources...")
+            st.session_state.runner.stop()
+        except Exception as e:
+            print(f"Error stopping runner: {e}")
+            
+    st.session_state.runner = None
+    st.session_state.model_info = None
+    st.session_state.model_load_error = None
+    st.session_state.current_model_path = model_path
+    
+    if not model_path or not os.path.exists(model_path):
+        st.session_state.model_load_error = "Model file not found"
+        return False
+        
+    if ImpulseRunner:
+        try:
+            runner = ImpulseRunner(model_path)
+            model_info = runner.init()
+            st.session_state.runner = runner
+            st.session_state.model_info = model_info
+            print(f"Model loaded successfully: {model_info['project']['owner']} / {model_info['project']['name']}")
+            return True
+        except Exception as e:
+            print(f"Failed to load model from {model_path}: {e}")
+            st.session_state.model_load_error = str(e)
+            return False
+    else:
+        st.session_state.model_load_error = "Edge Impulse Library not found"
+        return False
 
 
 def init_session_state():
@@ -84,21 +121,24 @@ def init_session_state():
     if 'session_peak_count' not in st.session_state: st.session_state.session_peak_count = 0
 
     # AI Model State
+    if 'current_model_path' not in st.session_state:
+        st.session_state.current_model_path = None
+        
     if 'runner' not in st.session_state:
         st.session_state.runner = None
         st.session_state.model_info = None
         st.session_state.model_load_error = None
         
-        if ImpulseRunner:
-            try:
-                runner = ImpulseRunner(MODEL_PATH)
-                model_info = runner.init()
-                st.session_state.runner = runner
-                st.session_state.model_info = model_info
-                print(f"Model loaded: {model_info['project']['owner']} / {model_info['project']['name']}")
-            except Exception as e:
-                print(f"Failed to load model: {e}")
-                st.session_state.model_load_error = str(e)
+        # Try to auto-load the first available model if models dir exists
+        if os.path.exists(MODELS_DIR):
+            eim_files = [f for f in os.listdir(MODELS_DIR) if f.endswith('.eim')]
+            if eim_files:
+                default_model = os.path.join(MODELS_DIR, eim_files[0])
+                load_model_safe(default_model)
+            else:
+                st.session_state.model_load_error = "No .eim models found in models directory"
+        else:
+             st.session_state.model_load_error = "Models directory not found"
 
     if 'inference_buffer' not in st.session_state or getattr(st.session_state.inference_buffer, "maxlen", 0) != INFERENCE_WINDOW_SIZE:
         st.session_state.inference_buffer = deque(maxlen=INFERENCE_WINDOW_SIZE)

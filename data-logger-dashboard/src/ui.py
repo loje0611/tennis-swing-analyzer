@@ -1,5 +1,6 @@
 import streamlit as st
 import subprocess
+import os
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
@@ -7,7 +8,7 @@ import plotly.graph_objects as go
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
 from src.data_manager import save_data_to_csv
 from src.styles import styles
-from src.state import init_session_state
+from src.state import init_session_state, load_model_safe, MODELS_DIR
 from src.tts import render_tts_audio_button, render_tts_speaker
 from src.inference import process_data_queue
 
@@ -49,11 +50,41 @@ def render_sidebar():
         st.markdown("---")
 
         # 3. AI Model Status
-        st.markdown("### 🤖 AI Model")
+        st.markdown("### 🤖 AI Model Settings")
+        
+        # Scan and list models
+        eim_files = []
+        if os.path.exists(MODELS_DIR):
+            eim_files = [f for f in os.listdir(MODELS_DIR) if f.endswith('.eim')]
+            
+        if not eim_files:
+            st.warning("No .eim models found in models folder.")
+        else:
+            current_idx = 0
+            if getattr(st.session_state, 'current_model_path', None):
+                current_base = os.path.basename(st.session_state.current_model_path)
+                if current_base in eim_files:
+                    current_idx = eim_files.index(current_base)
+            
+            selected_model = st.selectbox(
+                "Select Model File",
+                eim_files,
+                index=current_idx,
+                key="model_selectbox"
+            )
+            
+            # If the user changed the model via selectbox, reload it
+            if selected_model:
+                selected_model_path = os.path.join(MODELS_DIR, selected_model)
+                if getattr(st.session_state, 'current_model_path', None) != selected_model_path:
+                    with st.spinner(f"Loading {selected_model}..."):
+                        load_model_safe(selected_model_path)
+                    st.rerun()
+        
         if st.session_state.get('model_load_error'):
             st.warning(f"⚠️ Error: {st.session_state.model_load_error}")
         elif st.session_state.get('runner'):
-            st.success("✅ Loaded")
+            st.success("✅ Model Loaded Active")
         else:
             st.info("ℹ️ Not available")
 
@@ -145,8 +176,14 @@ if fragment:
         
         display_text = swing_type.upper()
         
+        # Model display info
+        model_name_display = os.path.basename(st.session_state.get('current_model_path', 'None')) if getattr(st.session_state, 'runner', None) else "No Model"
+        
         # 1. Main Swing Card (with colored label text)
         st.markdown(f"""
+            <div style="text-align:center; margin-bottom: 10px;">
+               <span style="background-color: #333; padding: 4px 12px; border-radius: 12px; font-size: 0.9em; color: #aaa;">🧠 {model_name_display}</span>
+            </div>
             <div class="swing-card {display_class}">
                 <p class="swing-title">LAST DETECTED SWING</p>
                 <h1 class="swing-label {label_color_class}">{display_text}</h1>
