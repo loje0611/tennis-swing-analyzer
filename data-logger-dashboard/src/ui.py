@@ -1,16 +1,53 @@
 import streamlit as st
 import subprocess
 import os
+import time
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
 
-from src.config import MAX_QUEUE_SIZE, SERVICE_UUID
+from src.config import MAX_QUEUE_SIZE, SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
 from src.data_manager import save_data_to_csv
 from src.styles import styles
 from src.state import init_session_state, load_model_safe, MODELS_DIR
 from src.tts import render_tts_audio_button, render_tts_speaker
 from src.inference import process_data_queue
+
+
+# --- 공통 UI 헬퍼 함수 ---
+def _render_tts_if_needed():
+    """TTS Speaker 렌더링 (새 스윙 이벤트가 있을 때만)"""
+    if st.session_state.get('tts_enabled', False):
+        swing_id = st.session_state.get('tts_swing_id', '')
+        last_spoken = st.session_state.get('tts_last_spoken_id', '')
+        if swing_id and swing_id != last_spoken:
+            render_tts_speaker(
+                st.session_state.get('tts_message', ''),
+                swing_id
+            )
+            st.session_state.tts_last_spoken_id = swing_id
+
+
+def _render_ai_debug_log():
+    """AI 실시간 확률 로그 (디버깅용)"""
+    st.markdown("---")
+    st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
+    
+    debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{INFERENCE_WINDOW_SAMPLES}"
+    debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
+    st.caption(debug_info)
+    
+    if st.session_state.get('inference_error'):
+        st.error(f"Inference Error: {st.session_state.inference_error}")
+        
+    prob_dict = st.session_state.get('inference_probabilities', {})
+    if prob_dict:
+        log_text = ""
+        for label, score in prob_dict.items():
+            log_text += f"- **{label}**: {score*100:.1f}%\n"
+        st.markdown(log_text)
+    else:
+        st.caption("대기 중... (스윙 시 확률이 표시됩니다)")
 
 # Try to import fragment (Streamlit 1.37+)
 try:
@@ -270,37 +307,9 @@ if fragment:
             if time_since_last > 2.0:
                 st.warning("⚠️ No data from sensor (Sleeping?)")
 
-        # 6. TTS Speaker (client-side speech synthesis)
-        if st.session_state.get('tts_enabled', False):
-            swing_id = st.session_state.get('tts_swing_id', '')
-            last_spoken = st.session_state.get('tts_last_spoken_id', '')
-            if swing_id and swing_id != last_spoken:
-                render_tts_speaker(
-                    st.session_state.get('tts_message', ''),
-                    swing_id
-                )
-                st.session_state.tts_last_spoken_id = swing_id
-
-        # 7. AI 실시간 확률 로그 (디버깅용)
-        st.markdown("---")
-        st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
-        
-        # Debug Output
-        import src.state
-        debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{src.state.INFERENCE_WINDOW_SIZE}"
-        debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
-        st.caption(debug_info)
-        
-        if st.session_state.get('inference_error'):
-            st.error(f"Inference Error: {st.session_state.inference_error}")
-            
-        if st.session_state.get('inference_probabilities'):
-            log_text = ""
-            for label, score in st.session_state.inference_probabilities.items():
-                log_text += f"- **{label}**: {score*100:.1f}%\n"
-            st.markdown(log_text)
-        else:
-            st.caption("대기 중...")
+        # 6. TTS Speaker & AI Debug Log
+        _render_tts_if_needed()
+        _render_ai_debug_log()
 
     @fragment(run_every=0.5)
     def render_logger_tab():
@@ -355,37 +364,9 @@ if fragment:
             st.caption("Gyroscope (X, Y, Z)")
             st.line_chart(df[['gyro_x', 'gyro_y', 'gyro_z']], height=200)
 
-        # TTS Speaker (client-side speech synthesis)
-        if st.session_state.get('tts_enabled', False):
-            swing_id = st.session_state.get('tts_swing_id', '')
-            last_spoken = st.session_state.get('tts_last_spoken_id', '')
-            if swing_id and swing_id != last_spoken:
-                render_tts_speaker(
-                    st.session_state.get('tts_message', ''),
-                    swing_id
-                )
-                st.session_state.tts_last_spoken_id = swing_id
-
-        # 7. AI 실시간 확률 로그 (디버깅용)
-        st.markdown("---")
-        st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
-        
-        # Debug Output
-        import src.state
-        debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{src.state.INFERENCE_WINDOW_SIZE}"
-        debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
-        st.caption(debug_info)
-        
-        if st.session_state.get('inference_error'):
-            st.error(f"Inference Error: {st.session_state.inference_error}")
-            
-        if st.session_state.get('inference_probabilities'):
-            log_text = ""
-            for label, score in st.session_state.inference_probabilities.items():
-                log_text += f"- **{label}**: {score*100:.1f}%\n"
-            st.markdown(log_text)
-        else:
-            st.caption("대기 중...")
+        # TTS Speaker & AI Debug Log
+        _render_tts_if_needed()
+        _render_ai_debug_log()
 
 else:
     # Fallback for old streamlit
@@ -409,7 +390,6 @@ def start_logging():
     st.session_state.show_save_confirm = False
     
     # TTS Announcement: Start Logging
-    import time
     st.session_state.logging_packet_count = 0
     main = st.session_state.main_category
     sub = st.session_state.sub_category
@@ -432,7 +412,6 @@ def save_and_stop():
     st.session_state.show_save_confirm = False
     
     # TTS Announcement: End Logging
-    import time
     count = st.session_state.get('session_peak_count', 0)
     st.session_state.tts_message = f"{count}회 스윙, 로깅을 종료합니다."
     st.session_state.tts_swing_id = f"end_{time.time()}"
@@ -441,8 +420,6 @@ def save_and_stop():
         try:
             fp = save_data_to_csv(st.session_state.log_buffer, st.session_state.main_category, st.session_state.sub_category)
             st.toast(f"Saved: {fp}", icon="✅")
-        except Exception as e:
-            st.error(f"Error: {e}")
         except Exception as e:
             st.error(f"Error: {e}")
     
@@ -454,10 +431,8 @@ def discard_and_stop():
     st.session_state.is_logging = False
     st.session_state.show_save_confirm = False
     st.session_state.log_buffer = []
-    st.session_state.log_buffer = []
 
     # TTS Announcement: Discard Logging
-    import time
     count = st.session_state.get('session_peak_count', 0)
     st.session_state.tts_message = f"{count}회 스윙, 로깅을 취소합니다."
     st.session_state.tts_swing_id = f"discard_{time.time()}"

@@ -3,7 +3,7 @@ import streamlit as st
 from collections import deque
 from datetime import datetime
 from queue import Queue
-from src.config import MAX_QUEUE_SIZE, MODEL_PATH
+from src.config import MAX_QUEUE_SIZE, INFERENCE_WINDOW_SAMPLES, INFERENCE_BUFFER_SIZE
 from src.ble_manager import RealBLEManager
 
 # Edge Impulse Import
@@ -15,9 +15,7 @@ except ImportError:
 
 # Constants
 VIS_BUFFER_SIZE = 200
-INFERENCE_WINDOW_SIZE = 100  # 6 features * 100 = 600 length expected by model
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models")
-# MODEL_PATH is imported from src.config
 
 
 @st.cache_resource
@@ -140,8 +138,10 @@ def init_session_state():
         else:
              st.session_state.model_load_error = "Models directory not found"
 
-    if 'inference_buffer' not in st.session_state or getattr(st.session_state.inference_buffer, "maxlen", 0) != INFERENCE_WINDOW_SIZE:
-        st.session_state.inference_buffer = deque(maxlen=INFERENCE_WINDOW_SIZE)
+    # The buffer size must be larger than INFERENCE_WINDOW_SAMPLES to allow for asymmetric slicing 
+    # (e.g., 20 past samples + 40 future samples). 150 samples = 3 seconds of buffer.
+    if 'inference_buffer' not in st.session_state or getattr(st.session_state.inference_buffer, "maxlen", 0) != INFERENCE_BUFFER_SIZE:
+        st.session_state.inference_buffer = deque(maxlen=INFERENCE_BUFFER_SIZE)
     if 'inference_result' not in st.session_state:
         st.session_state.inference_result = {"label": "Idle", "score": 0.0}
     if 'inference_probabilities' not in st.session_state:

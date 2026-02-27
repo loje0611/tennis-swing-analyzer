@@ -1,9 +1,23 @@
 import streamlit as st
-import numpy as np
 import math
 import time
+from collections import deque
 from datetime import datetime
-from src.state import INFERENCE_WINDOW_SIZE
+from src.config import (
+    PEAK_ACCEL_THRESHOLD_G,
+    PEAK_COOLDOWN_SEC,
+    PACING_DELAY_SEC,
+    INFERENCE_PEAK_THRESHOLD_G,
+    INFERENCE_FALSE_POSITIVE_G,
+    INFERENCE_WINDOW_SAMPLES,
+    INFERENCE_BUFFER_SIZE,
+    INFERENCE_FUTURE_SAMPLES,
+    INFERENCE_COOLDOWN_FRAMES,
+    SWING_CONFIDENCE_THRESHOLD,
+    RACKET_RADIUS_M,
+    SPEED_CALIBRATION_FACTOR,
+    SPEED_HISTORY_WINDOW_SEC,
+)
 
 
 def process_data_queue():
@@ -36,62 +50,52 @@ def process_data_queue():
 
     st.session_state.last_data_time = datetime.now()
     
-    # --- Speed Calculation (Physics) ---
-    RACKET_RADIUS_M = 1.1        # Effective radius of arm + racket
-    CALIBRATION_FACTOR = 1.2     # Calibration factor for air resistance etc.
-    
-    # V = r * omega
+    # --- Speed Calculation (Physics: V = r * omega) ---
     last_item = items[-1]
     gx, gy, gz = last_item['gyro_x'], last_item['gyro_y'], last_item['gyro_z']
-    gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)  # deg/s
+    gyro_mag = math.sqrt(gx**2 + gy**2 + gz**2)  # deg/s
     rad_s = math.radians(gyro_mag)
     v_mps = RACKET_RADIUS_M * rad_s
-    v_kmh = v_mps * 3.6 * CALIBRATION_FACTOR
+    v_kmh = v_mps * 3.6 * SPEED_CALIBRATION_FACTOR
     st.session_state.current_speed_kmh = v_kmh
 
     # --- Data Logger Logic (Peak Detection & Pacing) ---
     current_time = time.time()
     
-    # 1. Peak Detection (> 5.0G, 1.5s cooldown) - INCREASED THRESHOLD
-    # Check if ANY sample in the batch exceeds the threshold
+    # 1. Peak Detection
     max_accel_mag = 0.0
     for item in items:
         mag = math.sqrt(item['accel_x']**2 + item['accel_y']**2 + item['accel_z']**2)
         if mag > max_accel_mag:
             max_accel_mag = mag
             
-    # For Debugging
     st.session_state.last_max_mag = max_accel_mag
 
-    if max_accel_mag >= 3.0:
-        if current_time - st.session_state.last_peak_time >= 1.5:
+    if max_accel_mag >= PEAK_ACCEL_THRESHOLD_G:
+        if current_time - st.session_state.last_peak_time >= PEAK_COOLDOWN_SEC:
             st.session_state.last_peak_time = current_time
             st.session_state.pacing_guide_triggered = False
             
-            # Count peaks for Data Logger session stats
             if st.session_state.is_logging:
                 st.session_state.session_peak_count = st.session_state.get('session_peak_count', 0) + 1
             
-            # Peak detected debugging
             print(f"Peak Detected: {max_accel_mag:.2f} G")
             
-    # 2. Pacing Assistant (2.0s after peak)
+    # 2. Pacing Assistant
     if st.session_state.is_logging:
         if not st.session_state.pacing_guide_triggered:
-            if current_time - st.session_state.last_peak_time >= 2.0:
+            if current_time - st.session_state.last_peak_time >= PACING_DELAY_SEC:
                 st.session_state.tts_message = "다음"
                 st.session_state.tts_swing_id = f"pace_{current_time}"
                 st.session_state.pacing_guide_triggered = True
 
-    # --- Peak Speed History (2s Window) for Gauge Display ---
+    # --- Peak Speed History for Gauge Display ---
     now = datetime.now()
     st.session_state.speed_history.append((now, v_kmh))
     
-    # Remove old data (> 2.0s)
-    while st.session_state.speed_history and (now - st.session_state.speed_history[0][0]).total_seconds() > 2.0:
+    while st.session_state.speed_history and (now - st.session_state.speed_history[0][0]).total_seconds() > SPEED_HISTORY_WINDOW_SEC:
         st.session_state.speed_history.popleft()
     
-    # Update Peak Speed (for Gauge)
     if st.session_state.speed_history:
         st.session_state.peak_speed_2s = max(s[1] for s in st.session_state.speed_history)
     else:
@@ -104,13 +108,10 @@ def process_data_queue():
     
     # --- Inference & Counting ---
     if st.session_state.get('runner'):
-        # 1. 넉넉한 버퍼 유지 (3~4초 분량, 200샘플 확보)
-        from collections import deque
-        if getattr(st.session_state.inference_buffer, "maxlen", 0) < 200:
+        if getattr(st.session_state.inference_buffer, "maxlen", 0) < INFERENCE_BUFFER_SIZE:
             old_data = list(st.session_state.inference_buffer)
-            st.session_state.inference_buffer = deque(old_data, maxlen=200)
+            st.session_state.inference_buffer = deque(old_data, maxlen=INFERENCE_BUFFER_SIZE)
 
-        # 상태 머신 변수 초기화
         if 'inference_sm_state' not in st.session_state:
             st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
             st.session_state.samples_after_peak = 0
@@ -125,33 +126,46 @@ def process_data_queue():
             
             # --- State Machine: 피크(Impact) 감지 및 정렬 ---
             if st.session_state.inference_sm_state == 'COOLDOWN':
-                # 5. 쿨타임 (중복 추론 방지)
                 st.session_state.cooldown_frames -= 1
                 if st.session_state.cooldown_frames <= 0:
                     st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
                     
             elif st.session_state.inference_sm_state == 'WAITING_FOR_PEAK':
-                # 2. 피크 감지 (가속도 크기계산)
                 accel_mag = math.sqrt(item['accel_x']**2 + item['accel_y']**2 + item['accel_z']**2)
-                if accel_mag > 3.0:  # 임계치(Threshold)
-                    st.session_state.inference_sm_state = 'WAITING_FOR_CENTERING'
+                if accel_mag > INFERENCE_PEAK_THRESHOLD_G:
+                    print(f"Inference SM: Peak detected! magnitude={accel_mag:.2f}")
+                    st.session_state.inference_sm_state = 'WAITING_FOR_FUTURE_SAMPLES'
                     st.session_state.samples_after_peak = 0
                     
-            elif st.session_state.inference_sm_state == 'WAITING_FOR_CENTERING':
-                # 3. 센터링 및 캡처 대기 (팔로스루 1초 대기 = 50Hz 기준 50샘플)
+            elif st.session_state.inference_sm_state == 'WAITING_FOR_FUTURE_SAMPLES':
                 st.session_state.samples_after_peak += 1
-                if st.session_state.samples_after_peak >= 50:
-                    # 4. 완벽한 2초 추출 (피크를 정가운데에 배치하기 위해 맨 뒤 100샘플Slice)
-                    if len(st.session_state.inference_buffer) >= 100:
-                        window_features = list(st.session_state.inference_buffer)[-100:]
+                if st.session_state.samples_after_peak >= INFERENCE_FUTURE_SAMPLES:
+                    if len(st.session_state.inference_buffer) >= INFERENCE_WINDOW_SAMPLES:
+                        window_features = list(st.session_state.inference_buffer)[-INFERENCE_WINDOW_SAMPLES:]
+                        
+                        # Validate: reject false positives (e.g. dropping racket)
+                        max_mag = 0
+                        for row in window_features:
+                            ax, ay, az = row[0], row[1], row[2]
+                            mag = math.sqrt(ax**2 + ay**2 + az**2)
+                            if mag > max_mag:
+                                max_mag = mag
+                                
+                        if max_mag < INFERENCE_FALSE_POSITIVE_G:
+                            print(f"Inference SM: False positive peak detected (max_mag={max_mag:.2f}). Ignoring.")
+                            st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
+                            continue
+                            
+                        print(f"Slicing {INFERENCE_WINDOW_SAMPLES} samples from buffer of length {len(st.session_state.inference_buffer)}")
                         
                         flat_features = []
                         for row in window_features:
                             flat_features.extend(row)
                             
-                        # 추론 실행
                         try:
+                            print(f"Running classify with features length {len(flat_features)}")
                             res = st.session_state.runner.classify(flat_features)
+                            print(f"Classify result: {res}")
                             st.session_state.inference_error = None
                             if 'result' in res and 'classification' in res['result']:
                                 classifications = res['result']['classification']
@@ -162,10 +176,10 @@ def process_data_queue():
                                     "label": best_label,
                                     "score": best_score
                                 }
-                                st.session_state.inference_probabilities = classifications
+                                st.session_state.inference_probabilities = dict(classifications)
 
-                                # --- 스윙 카운팅 및 UI 업데이트 (이벤트 단발성 호출) ---
-                                if best_score > 0.60:
+                                # --- 스윙 카운팅 및 UI 업데이트 ---
+                                if best_score > SWING_CONFIDENCE_THRESHOLD:
                                     display_label = best_label.replace("_", " ")
 
                                     if "Forehand" in best_label:
@@ -198,14 +212,9 @@ def process_data_queue():
                             st.session_state.inference_error = str(e)
                             print(f"Inference error: {e}")
                         
-                        # 5. 쿨타임 (1.5초 = 50Hz 기준 75프레임 적용하여 중복 추론 방지)
                         st.session_state.inference_sm_state = 'COOLDOWN'
-                        st.session_state.cooldown_frames = 75
+                        st.session_state.cooldown_frames = INFERENCE_COOLDOWN_FRAMES
                     else:
-                        # 버퍼 사이즈가 모자란 특수 케이스 예외 처리
                         st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
 
         st.session_state.inference_debug_buffer_len = len(st.session_state.inference_buffer)
-
-    if st.session_state.get('ble_manager'):
-        st.session_state.ble_manager.queue_overflow_count = 0
