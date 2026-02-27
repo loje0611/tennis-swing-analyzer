@@ -14,7 +14,7 @@ except ImportError:
 
 # Constants
 VIS_BUFFER_SIZE = 200
-INFERENCE_WINDOW_SIZE = 50  # 1000ms at 50Hz
+INFERENCE_WINDOW_SIZE = 100  # 6 features * 100 = 600 length expected by model
 # MODEL_PATH is imported from src.config
 
 
@@ -100,7 +100,15 @@ def init_session_state():
                 print(f"Failed to load model: {e}")
                 st.session_state.model_load_error = str(e)
 
-    if 'inference_buffer' not in st.session_state:
+    if 'inference_buffer' not in st.session_state or getattr(st.session_state.inference_buffer, "maxlen", 0) != INFERENCE_WINDOW_SIZE:
         st.session_state.inference_buffer = deque(maxlen=INFERENCE_WINDOW_SIZE)
     if 'inference_result' not in st.session_state:
         st.session_state.inference_result = {"label": "Idle", "score": 0.0}
+    if 'inference_probabilities' not in st.session_state:
+        st.session_state.inference_probabilities = {}
+    if 'inference_debug_buffer_len' not in st.session_state:
+        st.session_state.inference_debug_buffer_len = 0
+    if 'inference_error' not in st.session_state:
+        st.session_state.inference_error = None
+
+

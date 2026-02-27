@@ -104,66 +104,108 @@ def process_data_queue():
     
     # --- Inference & Counting ---
     if st.session_state.get('runner'):
+        # 1. 넉넉한 버퍼 유지 (3~4초 분량, 200샘플 확보)
+        from collections import deque
+        if getattr(st.session_state.inference_buffer, "maxlen", 0) < 200:
+            old_data = list(st.session_state.inference_buffer)
+            st.session_state.inference_buffer = deque(old_data, maxlen=200)
+
+        # 상태 머신 변수 초기화
+        if 'inference_sm_state' not in st.session_state:
+            st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
+            st.session_state.samples_after_peak = 0
+            st.session_state.cooldown_frames = 0
+
         for item in items:
-            st.session_state.inference_buffer.append([
+            features = [
                 item['accel_x'], item['accel_y'], item['accel_z'],
                 item['gyro_x'], item['gyro_y'], item['gyro_z']
-            ])
-        
-        if len(st.session_state.inference_buffer) == INFERENCE_WINDOW_SIZE:
-            features = []
-            for sample in st.session_state.inference_buffer:
-                features.extend(sample)
+            ]
+            st.session_state.inference_buffer.append(features)
             
-            try:
-                res = st.session_state.runner.classify(features)
-                if 'result' in res and 'classification' in res['result']:
-                    classifications = res['result']['classification']
-                    best_label = max(classifications, key=classifications.get)
-                    best_score = classifications[best_label]
+            # --- State Machine: 피크(Impact) 감지 및 정렬 ---
+            if st.session_state.inference_sm_state == 'COOLDOWN':
+                # 5. 쿨타임 (중복 추론 방지)
+                st.session_state.cooldown_frames -= 1
+                if st.session_state.cooldown_frames <= 0:
+                    st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
                     
-                    # Update raw inference result
-                    st.session_state.inference_result = {
-                        "label": best_label,
-                        "score": best_score
-                    }
-
-                    # --- Swing Counting & Max Speed Capture Logic ---
-                    current_label = best_label if best_score > 0.75 else "Idle"
-                    prev_label = st.session_state.last_predicted_label
+            elif st.session_state.inference_sm_state == 'WAITING_FOR_PEAK':
+                # 2. 피크 감지 (가속도 크기계산)
+                accel_mag = math.sqrt(item['accel_x']**2 + item['accel_y']**2 + item['accel_z']**2)
+                if accel_mag > 3.0:  # 임계치(Threshold)
+                    st.session_state.inference_sm_state = 'WAITING_FOR_CENTERING'
+                    st.session_state.samples_after_peak = 0
                     
-                    if current_label != prev_label:
-                        if current_label == "Forehand" and prev_label != "Forehand":
-                            st.session_state.swing_count_fh += 1
-                            st.session_state.last_swing_speed = st.session_state.peak_speed_2s
-                            st.session_state.last_swing_type = "Forehand"
-                            st.session_state.force_gauge_update = True
-                            st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
-                            
-                            # TTS trigger (Live Coaching Only)
-                            if st.session_state.active_page == "🔥 Live Coaching":
-                                speed = int(st.session_state.peak_speed_2s)
-                                st.session_state.tts_message = f"포핸드, {speed} 킬로미터"
-                                st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
-                            
-                        elif current_label == "Backhand" and prev_label != "Backhand":
-                            st.session_state.swing_count_bh += 1
-                            st.session_state.last_swing_speed = st.session_state.peak_speed_2s
-                            st.session_state.last_swing_type = "Backhand"
-                            st.session_state.force_gauge_update = True
-                            st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
-                            
-                            # TTS trigger (Live Coaching Only)
-                            if st.session_state.active_page == "🔥 Live Coaching":
-                                speed = int(st.session_state.peak_speed_2s)
-                                st.session_state.tts_message = f"백핸드, {speed} 킬로미터"
-                                st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
+            elif st.session_state.inference_sm_state == 'WAITING_FOR_CENTERING':
+                # 3. 센터링 및 캡처 대기 (팔로스루 1초 대기 = 50Hz 기준 50샘플)
+                st.session_state.samples_after_peak += 1
+                if st.session_state.samples_after_peak >= 50:
+                    # 4. 완벽한 2초 추출 (피크를 정가운데에 배치하기 위해 맨 뒤 100샘플Slice)
+                    if len(st.session_state.inference_buffer) >= 100:
+                        window_features = list(st.session_state.inference_buffer)[-100:]
                         
-                        # Do NOT update last_swing_type if shifting back to Idle
-                        st.session_state.last_predicted_label = current_label
+                        flat_features = []
+                        for row in window_features:
+                            flat_features.extend(row)
+                            
+                        # 추론 실행
+                        try:
+                            res = st.session_state.runner.classify(flat_features)
+                            st.session_state.inference_error = None
+                            if 'result' in res and 'classification' in res['result']:
+                                classifications = res['result']['classification']
+                                best_label = max(classifications, key=classifications.get)
+                                best_score = classifications[best_label]
+                                
+                                st.session_state.inference_result = {
+                                    "label": best_label,
+                                    "score": best_score
+                                }
+                                st.session_state.inference_probabilities = classifications
 
-            except Exception as e:
-                print(f"Inference error: {e}")
+                                # --- 스윙 카운팅 및 UI 업데이트 (이벤트 단발성 호출) ---
+                                if best_score > 0.60:
+                                    display_label = best_label.replace("_", " ")
+
+                                    if "Forehand" in best_label:
+                                        st.session_state.swing_count_fh += 1
+                                        st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                        st.session_state.last_swing_type = display_label
+                                        st.session_state.force_gauge_update = True
+                                        st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
+                                        
+                                        if st.session_state.active_page == "🔥 Live Coaching":
+                                            speed = int(st.session_state.peak_speed_2s)
+                                            st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
+                                            st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
+                                        
+                                    elif "Backhand" in best_label:
+                                        st.session_state.swing_count_bh += 1
+                                        st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                        st.session_state.last_swing_type = display_label
+                                        st.session_state.force_gauge_update = True
+                                        st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
+                                        
+                                        if st.session_state.active_page == "🔥 Live Coaching":
+                                            speed = int(st.session_state.peak_speed_2s)
+                                            st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
+                                            st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
+                                    
+                                    st.session_state.last_predicted_label = best_label
+
+                        except Exception as e:
+                            st.session_state.inference_error = str(e)
+                            print(f"Inference error: {e}")
+                        
+                        # 5. 쿨타임 (1.5초 = 50Hz 기준 75프레임 적용하여 중복 추론 방지)
+                        st.session_state.inference_sm_state = 'COOLDOWN'
+                        st.session_state.cooldown_frames = 75
+                    else:
+                        # 버퍼 사이즈가 모자란 특수 케이스 예외 처리
+                        st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
+
+        st.session_state.inference_debug_buffer_len = len(st.session_state.inference_buffer)
 
     if st.session_state.get('ble_manager'):
         st.session_state.ble_manager.queue_overflow_count = 0

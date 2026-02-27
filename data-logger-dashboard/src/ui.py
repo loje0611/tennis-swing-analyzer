@@ -59,7 +59,7 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # 3. Page Navigation
+        # 4. Page Navigation
         st.session_state.active_page = st.radio(
             "📋 Menu",
             ["🔥 Live Coaching", "💾 Data Logger"],
@@ -136,10 +136,10 @@ if fragment:
         
         display_class = "swing-ready"
         label_color_class = "swing-label-ready"
-        if swing_type == "Forehand":
+        if "Forehand" in swing_type:
             display_class = "swing-fh"
             label_color_class = "swing-label-fh"
-        elif swing_type == "Backhand":
+        elif "Backhand" in swing_type:
             display_class = "swing-bh"
             label_color_class = "swing-label-bh"
         
@@ -244,6 +244,27 @@ if fragment:
                 )
                 st.session_state.tts_last_spoken_id = swing_id
 
+        # 7. AI 실시간 확률 로그 (디버깅용)
+        st.markdown("---")
+        st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
+        
+        # Debug Output
+        import src.state
+        debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{src.state.INFERENCE_WINDOW_SIZE}"
+        debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
+        st.caption(debug_info)
+        
+        if st.session_state.get('inference_error'):
+            st.error(f"Inference Error: {st.session_state.inference_error}")
+            
+        if st.session_state.get('inference_probabilities'):
+            log_text = ""
+            for label, score in st.session_state.inference_probabilities.items():
+                log_text += f"- **{label}**: {score*100:.1f}%\n"
+            st.markdown(log_text)
+        else:
+            st.caption("대기 중...")
+
     @fragment(run_every=0.5)
     def render_logger_tab():
         process_data_queue()
@@ -262,7 +283,7 @@ if fragment:
                   time_diff = datetime.now().timestamp() - st.session_state.get('last_peak_time', 0)
                   st.caption(f"Max Mag: {st.session_state.last_max_mag:.2f} G (Thresh: 3.0) | Time since peak: {time_diff:.1f}s")
              
-        col_ctrl, col_info = st.columns([2, 1])
+        col_ctrl, col_sample, col_swing = st.columns([2, 1, 1])
         with col_ctrl:
             if not st.session_state.is_logging:
                 if st.button("🔴 Start Logging", type="primary", use_container_width=True):
@@ -271,9 +292,13 @@ if fragment:
                 if st.button("💾 Stop & Save", type="primary", use_container_width=True):
                     confirm_stop_logging()
 
-        with col_info:
+        with col_sample:
             count = len(st.session_state.log_buffer)
             st.metric("Samples", count)
+            
+        with col_swing:
+            swings = st.session_state.get('session_peak_count', 0)
+            st.metric("Swings", swings)
 
         # Save Confirmation
         if st.session_state.get('show_save_confirm', False):
@@ -303,6 +328,27 @@ if fragment:
                     swing_id
                 )
                 st.session_state.tts_last_spoken_id = swing_id
+
+        # 7. AI 실시간 확률 로그 (디버깅용)
+        st.markdown("---")
+        st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
+        
+        # Debug Output
+        import src.state
+        debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{src.state.INFERENCE_WINDOW_SIZE}"
+        debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
+        st.caption(debug_info)
+        
+        if st.session_state.get('inference_error'):
+            st.error(f"Inference Error: {st.session_state.inference_error}")
+            
+        if st.session_state.get('inference_probabilities'):
+            log_text = ""
+            for label, score in st.session_state.inference_probabilities.items():
+                log_text += f"- **{label}**: {score*100:.1f}%\n"
+            st.markdown(log_text)
+        else:
+            st.caption("대기 중...")
 
 else:
     # Fallback for old streamlit
