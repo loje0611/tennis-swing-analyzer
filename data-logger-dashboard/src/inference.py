@@ -182,12 +182,14 @@ def process_data_queue():
                                 if best_score > SWING_CONFIDENCE_THRESHOLD:
                                     display_label = best_label.replace("_", " ")
 
+                                    short_tag = "".join(word[0].upper() for word in best_label.split("_"))
+
                                     if "Forehand" in best_label:
                                         st.session_state.swing_count_fh += 1
                                         st.session_state.last_swing_speed = st.session_state.peak_speed_2s
                                         st.session_state.last_swing_type = display_label
                                         st.session_state.force_gauge_update = True
-                                        st.session_state.recent_shots.append(("FH", st.session_state.peak_speed_2s))
+                                        st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
                                         
                                         if st.session_state.active_page == "🔥 Live Coaching":
                                             speed = int(st.session_state.peak_speed_2s)
@@ -199,7 +201,7 @@ def process_data_queue():
                                         st.session_state.last_swing_speed = st.session_state.peak_speed_2s
                                         st.session_state.last_swing_type = display_label
                                         st.session_state.force_gauge_update = True
-                                        st.session_state.recent_shots.append(("BH", st.session_state.peak_speed_2s))
+                                        st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
                                         
                                         if st.session_state.active_page == "🔥 Live Coaching":
                                             speed = int(st.session_state.peak_speed_2s)
@@ -217,4 +219,18 @@ def process_data_queue():
                     else:
                         st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
 
+        # --- Always-on Inference for Debugging ---
         st.session_state.inference_debug_buffer_len = len(st.session_state.inference_buffer)
+        
+        if st.session_state.inference_debug_buffer_len >= INFERENCE_WINDOW_SAMPLES:
+            window_features = list(st.session_state.inference_buffer)[-INFERENCE_WINDOW_SAMPLES:]
+            flat_features = []
+            for row in window_features:
+                flat_features.extend(row)
+                
+            try:
+                res = st.session_state.runner.classify(flat_features)
+                if 'result' in res and 'classification' in res['result']:
+                    st.session_state.continuous_probabilities = dict(res['result']['classification'])
+            except Exception:
+                pass

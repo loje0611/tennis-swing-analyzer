@@ -40,7 +40,7 @@ def _render_ai_debug_log():
     if st.session_state.get('inference_error'):
         st.error(f"Inference Error: {st.session_state.inference_error}")
         
-    prob_dict = st.session_state.get('inference_probabilities', {})
+    prob_dict = st.session_state.get('continuous_probabilities', {})
     if prob_dict:
         log_text = ""
         for label, score in prob_dict.items():
@@ -287,7 +287,7 @@ if fragment:
             shots_html = '<div style="text-align:center; margin: 10px 0 20px 0;">'
             shots_html += '<p style="color:#888; font-size:0.9rem; margin-bottom:8px;">📜 RECENT SHOTS</p>'
             for shot_type, shot_speed in st.session_state.recent_shots:
-                badge_class = "shot-badge-fh" if shot_type == "FH" else "shot-badge-bh"
+                badge_class = "shot-badge-fh" if shot_type.startswith("F") else "shot-badge-bh"
                 shots_html += f'<span class="shot-badge {badge_class}">{shot_type} {shot_speed:.0f}km</span>'
             shots_html += '</div>'
             st.markdown(shots_html, unsafe_allow_html=True)
