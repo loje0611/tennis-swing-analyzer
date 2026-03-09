@@ -122,6 +122,12 @@ def init_session_state():
     if 'pacing_guide_triggered' not in st.session_state: st.session_state.pacing_guide_triggered = False
     if 'session_peak_count' not in st.session_state: st.session_state.session_peak_count = 0
 
+    # Data Logger UI: peak vline, mini chart, batch progress, total files saved
+    if 'last_peak_samples_ago' not in st.session_state: st.session_state.last_peak_samples_ago = 9999
+    if 'last_captured_swing_data' not in st.session_state: st.session_state.last_captured_swing_data = []
+    if 'total_files_saved' not in st.session_state: st.session_state.total_files_saved = 0
+    if 'batch_swings_target' not in st.session_state: st.session_state.batch_swings_target = 10
+
     # AI Model State
     if 'current_model_path' not in st.session_state:
         st.session_state.current_model_path = None

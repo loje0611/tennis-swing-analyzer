@@ -8,10 +8,13 @@ from src.config import (
     PEAK_COOLDOWN_SEC,
     PACING_DELAY_SEC,
     INFERENCE_PEAK_THRESHOLD_G,
+    INFERENCE_TRIGGER_THRESHOLD_G,
     INFERENCE_FALSE_POSITIVE_G,
     INFERENCE_WINDOW_SAMPLES,
+    INFERENCE_PEAK_PAST_SAMPLES,
     INFERENCE_BUFFER_SIZE,
     INFERENCE_FUTURE_SAMPLES,
+    INFERENCE_PEAK_SEARCH_WINDOW,
     INFERENCE_COOLDOWN_FRAMES,
     SWING_CONFIDENCE_THRESHOLD,
     RACKET_RADIUS_M,
@@ -71,14 +74,15 @@ def process_data_queue():
             
     st.session_state.last_max_mag = max_accel_mag
 
+    peak_detected_this_batch = False
     if max_accel_mag >= PEAK_ACCEL_THRESHOLD_G:
         if current_time - st.session_state.last_peak_time >= PEAK_COOLDOWN_SEC:
             st.session_state.last_peak_time = current_time
             st.session_state.pacing_guide_triggered = False
-            
+            st.session_state.last_peak_samples_ago = 0
+            peak_detected_this_batch = True
             if st.session_state.is_logging:
                 st.session_state.session_peak_count = st.session_state.get('session_peak_count', 0) + 1
-            
             print(f"Peak Detected: {max_accel_mag:.2f} G")
             
     # 2. Pacing Assistant
@@ -105,6 +109,15 @@ def process_data_queue():
     st.session_state.vis_buffer.extend(items)
     if st.session_state.is_logging:
         st.session_state.log_buffer.extend(items)
+    if not peak_detected_this_batch:
+        st.session_state.last_peak_samples_ago = st.session_state.get('last_peak_samples_ago', 9999) + len(items)
+    # Data Logger 미니 차트: 피크 감지 시 vis_buffer 마지막 60샘플 저장 (모델 없어도 표시)
+    if peak_detected_this_batch and len(st.session_state.vis_buffer) >= 60:
+        tail = list(st.session_state.vis_buffer)[-60:]
+        st.session_state.last_captured_swing_data = [
+            [p['accel_x'], p['accel_y'], p['accel_z'], p['gyro_x'], p['gyro_y'], p['gyro_z']]
+            for p in tail
+        ]
     
     # --- Inference & Counting ---
     if st.session_state.get('runner'):
@@ -114,7 +127,8 @@ def process_data_queue():
 
         if 'inference_sm_state' not in st.session_state:
             st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
-            st.session_state.samples_after_peak = 0
+            st.session_state.samples_after_trigger = 0
+            st.session_state.trigger_buffer_index = 0
             st.session_state.cooldown_frames = 0
 
         for item in items:
@@ -123,101 +137,99 @@ def process_data_queue():
                 item['gyro_x'], item['gyro_y'], item['gyro_z']
             ]
             st.session_state.inference_buffer.append(features)
-            
-            # --- State Machine: 피크(Impact) 감지 및 정렬 ---
+            buf = st.session_state.inference_buffer
+
+            # --- State Machine: True Peak Alignment (트리거 돌파 → 40샘플 대기 → 진짜 피크 검색 → 슬라이싱) ---
             if st.session_state.inference_sm_state == 'COOLDOWN':
                 st.session_state.cooldown_frames -= 1
                 if st.session_state.cooldown_frames <= 0:
                     st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
-                    
+
             elif st.session_state.inference_sm_state == 'WAITING_FOR_PEAK':
                 accel_mag = math.sqrt(item['accel_x']**2 + item['accel_y']**2 + item['accel_z']**2)
-                if accel_mag > INFERENCE_PEAK_THRESHOLD_G:
-                    print(f"Inference SM: Peak detected! magnitude={accel_mag:.2f}")
+                if accel_mag > INFERENCE_TRIGGER_THRESHOLD_G:
                     st.session_state.inference_sm_state = 'WAITING_FOR_FUTURE_SAMPLES'
-                    st.session_state.samples_after_peak = 0
-                    
+                    st.session_state.samples_after_trigger = 0
+                    st.session_state.trigger_buffer_index = len(buf) - 1
+                    print(f"Inference SM: Trigger crossed ({accel_mag:.2f}g), 40-sample countdown started.")
+
             elif st.session_state.inference_sm_state == 'WAITING_FOR_FUTURE_SAMPLES':
-                st.session_state.samples_after_peak += 1
-                if st.session_state.samples_after_peak >= INFERENCE_FUTURE_SAMPLES:
-                    buf = st.session_state.inference_buffer
-                    if len(buf) >= INFERENCE_WINDOW_SAMPLES:
-                        # 1.2s asymmetric: [Peak-20 : Peak+40] = 60 samples (peak at index 20 in window)
-                        window_features = list(buf)[-INFERENCE_WINDOW_SAMPLES:]
-                        
-                        # Validate: reject false positives (e.g. dropping racket)
-                        max_mag = 0
-                        for row in window_features:
-                            ax, ay, az = row[0], row[1], row[2]
-                            mag = math.sqrt(ax**2 + ay**2 + az**2)
-                            if mag > max_mag:
-                                max_mag = mag
-                                
-                        if max_mag < INFERENCE_FALSE_POSITIVE_G:
-                            print(f"Inference SM: False positive peak detected (max_mag={max_mag:.2f}). Ignoring.")
+                st.session_state.samples_after_trigger += 1
+                if st.session_state.samples_after_trigger >= INFERENCE_FUTURE_SAMPLES:
+                    B = list(buf)
+                    # 슬라이스 가능 구간: [20, len(B)-40] 내에서만 진짜 피크 검색
+                    search_start = INFERENCE_PEAK_PAST_SAMPLES
+                    search_end = len(B) - INFERENCE_FUTURE_SAMPLES + 1
+                    if search_end <= search_start or len(B) < INFERENCE_WINDOW_SAMPLES:
+                        st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
+                    else:
+                        # 슬라이스가 가능한 인덱스 구간에서 magnitude 최대인 '진짜 피크' 검색
+                        valid_indices = range(search_start, min(search_end, search_start + INFERENCE_PEAK_SEARCH_WINDOW))
+                        mags = [math.sqrt(B[i][0]**2 + B[i][1]**2 + B[i][2]**2) for i in valid_indices]
+                        peak_offset = max(range(len(mags)), key=lambda i: mags[i])
+                        true_peak_index = search_start + peak_offset
+
+                        if true_peak_index + INFERENCE_FUTURE_SAMPLES <= len(B):
+                            final_data = B[true_peak_index - INFERENCE_PEAK_PAST_SAMPLES : true_peak_index + INFERENCE_FUTURE_SAMPLES]
+                            window_features = [list(row) for row in final_data]
+                            st.session_state.last_captured_swing_data = window_features
+                            max_mag = max(mags)
+                            if max_mag < INFERENCE_FALSE_POSITIVE_G:
+                                print(f"Inference SM: False positive (max_mag={max_mag:.2f}). Ignoring.")
+                                st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
+                            else:
+                                # 메인 차트 vline: 진짜 피크 위치 (오탐이 아닐 때만 반영)
+                                st.session_state.last_peak_samples_ago = (len(B) - 1) - true_peak_index
+                                print(f"Slicing 60 samples (true peak at index {true_peak_index}, mag={max_mag:.2f}g)")
+                                flat_features = []
+                                for row in window_features:
+                                    flat_features.extend(row)
+                                try:
+                                    print(f"Running classify with features length {len(flat_features)}")
+                                    res = st.session_state.runner.classify(flat_features)
+                                    print(f"Classify result: {res}")
+                                    st.session_state.inference_error = None
+                                    if 'result' in res and 'classification' in res['result']:
+                                        classifications = res['result']['classification']
+                                        best_label = max(classifications, key=classifications.get)
+                                        best_score = classifications[best_label]
+                                        st.session_state.inference_result = {
+                                            "label": best_label,
+                                            "score": best_score
+                                        }
+                                        st.session_state.inference_probabilities = dict(classifications)
+                                        if best_score > SWING_CONFIDENCE_THRESHOLD:
+                                            display_label = best_label.replace("_", " ")
+                                            short_tag = "".join(word[0].upper() for word in best_label.split("_"))
+                                            if "Forehand" in best_label:
+                                                st.session_state.swing_count_fh += 1
+                                                st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                                st.session_state.last_swing_type = display_label
+                                                st.session_state.force_gauge_update = True
+                                                st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
+                                                if st.session_state.active_page == "🔥 Live Coaching":
+                                                    speed = int(st.session_state.peak_speed_2s)
+                                                    st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
+                                                    st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
+                                            elif "Backhand" in best_label:
+                                                st.session_state.swing_count_bh += 1
+                                                st.session_state.last_swing_speed = st.session_state.peak_speed_2s
+                                                st.session_state.last_swing_type = display_label
+                                                st.session_state.force_gauge_update = True
+                                                st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
+                                                if st.session_state.active_page == "🔥 Live Coaching":
+                                                    speed = int(st.session_state.peak_speed_2s)
+                                                    st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
+                                                    st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
+                                            st.session_state.last_predicted_label = best_label
+                                except Exception as e:
+                                    st.session_state.inference_error = str(e)
+                                    print(f"Inference error: {e}")
+                                st.session_state.inference_sm_state = 'COOLDOWN'
+                                st.session_state.cooldown_frames = INFERENCE_COOLDOWN_FRAMES
+                        else:
+                            # 슬라이스 범위 부족 (버퍼 끝에 너무 가까움) → 다음 트리거 대기
                             st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
-                            continue
-                            
-                        print(f"Slicing {INFERENCE_WINDOW_SAMPLES} samples from buffer of length {len(st.session_state.inference_buffer)}")
-                        
-                        flat_features = []
-                        for row in window_features:
-                            flat_features.extend(row)
-                            
-                        try:
-                            print(f"Running classify with features length {len(flat_features)}")
-                            res = st.session_state.runner.classify(flat_features)
-                            print(f"Classify result: {res}")
-                            st.session_state.inference_error = None
-                            if 'result' in res and 'classification' in res['result']:
-                                classifications = res['result']['classification']
-                                best_label = max(classifications, key=classifications.get)
-                                best_score = classifications[best_label]
-                                
-                                st.session_state.inference_result = {
-                                    "label": best_label,
-                                    "score": best_score
-                                }
-                                st.session_state.inference_probabilities = dict(classifications)
-
-                                # --- 스윙 카운팅 및 UI 업데이트 ---
-                                if best_score > SWING_CONFIDENCE_THRESHOLD:
-                                    display_label = best_label.replace("_", " ")
-
-                                    short_tag = "".join(word[0].upper() for word in best_label.split("_"))
-
-                                    if "Forehand" in best_label:
-                                        st.session_state.swing_count_fh += 1
-                                        st.session_state.last_swing_speed = st.session_state.peak_speed_2s
-                                        st.session_state.last_swing_type = display_label
-                                        st.session_state.force_gauge_update = True
-                                        st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
-                                        
-                                        if st.session_state.active_page == "🔥 Live Coaching":
-                                            speed = int(st.session_state.peak_speed_2s)
-                                            st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
-                                            st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
-                                        
-                                    elif "Backhand" in best_label:
-                                        st.session_state.swing_count_bh += 1
-                                        st.session_state.last_swing_speed = st.session_state.peak_speed_2s
-                                        st.session_state.last_swing_type = display_label
-                                        st.session_state.force_gauge_update = True
-                                        st.session_state.recent_shots.append((short_tag, st.session_state.peak_speed_2s))
-                                        
-                                        if st.session_state.active_page == "🔥 Live Coaching":
-                                            speed = int(st.session_state.peak_speed_2s)
-                                            st.session_state.tts_message = f"{display_label}, {speed} 킬로미터"
-                                            st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
-                                    
-                                    st.session_state.last_predicted_label = best_label
-
-                        except Exception as e:
-                            st.session_state.inference_error = str(e)
-                            print(f"Inference error: {e}")
-                        
-                        st.session_state.inference_sm_state = 'COOLDOWN'
-                        st.session_state.cooldown_frames = INFERENCE_COOLDOWN_FRAMES
                     else:
                         st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
 
