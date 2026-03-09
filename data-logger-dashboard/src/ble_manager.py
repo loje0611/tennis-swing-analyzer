@@ -176,11 +176,10 @@ class RealBLEManager(BLEManager):
             self.last_error = str(e)
         finally:
             self.connected = False
-            # 확실한 disconnect: BlueZ 캐시 정리를 위해 항상 disconnect 실행
+            # 확실한 cleanup: 항상 notify 해제(핸들러 정리) 후 disconnect로 BlueZ 캐시 정리
             if self.client:
                 try:
-                    if self.client.is_connected:
-                        await self.client.stop_notify(CHARACTERISTIC_UUID)
+                    await self.client.stop_notify(CHARACTERISTIC_UUID)
                 except Exception:
                     pass
                 try:

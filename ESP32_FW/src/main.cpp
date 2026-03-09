@@ -100,15 +100,16 @@ bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
 }
 
 // --- BLE Callbacks ---
-// NimBLE-Arduino: use NimBLEConnInfo& (wraps ble_gap_conn_desc). For raw desc use: onConnect(..., ble_gap_conn_desc* desc).
+// Base class has only onConnect(NimBLEServer*); get conn handle via getPeerInfo(0) after connect.
 class MyServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
-    (void)pServer;
+  void onConnect(NimBLEServer* pServer) override {
     deviceConnected = true;
     Serial.println("Client connected");
-    // Supervision timeout 100 * 10ms = 1s: drop connection if peer (e.g. Pi) does not respond
-    uint16_t conn_handle = connInfo.getConnHandle();
-    pServer->updateConnParams(conn_handle, 24, 40, 0, 100);
+    // Supervision timeout 100*10ms = 1s: drop connection if peer (e.g. Pi) does not respond
+    if (pServer->getConnectedCount() > 0) {
+      NimBLEConnInfo peer = pServer->getPeerInfo((uint8_t)0);
+      pServer->updateConnParams(peer.getConnHandle(), 24, 40, 0, 100);
+    }
   }
   void onDisconnect(NimBLEServer* pServer) override {
     (void)pServer;
