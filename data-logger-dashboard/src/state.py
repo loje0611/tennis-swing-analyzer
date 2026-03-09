@@ -85,6 +85,7 @@ def init_session_state():
     if 'main_category' not in st.session_state: st.session_state.main_category = 'Forehand'
     if 'sub_category' not in st.session_state: st.session_state.sub_category = 'Flat'
     if 'active_page' not in st.session_state: st.session_state.active_page = '🔥 Live Coaching'
+    if 'operation_mode' not in st.session_state: st.session_state.operation_mode = '🎾 코트 모드'
     if 'last_data_time' not in st.session_state: st.session_state.last_data_time = datetime.now()
     if 'show_save_confirm' not in st.session_state: st.session_state.show_save_confirm = False
     

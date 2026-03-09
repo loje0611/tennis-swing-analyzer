@@ -1,6 +1,7 @@
 import streamlit as st
 import asyncio
 import logging
+from datetime import datetime
 from queue import Queue
 from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
@@ -91,10 +92,17 @@ if 'view' not in st.session_state:
 if st.session_state.view == 'connection':
     render_connection_view(scan_and_connect)
 else:
-    # 연결 끊김 체크 (리얼 모드일 때만 중요할 수 있으나, 목 모드도 simulating disconnect 가능)
+    # 연결 끊김 체크
     if not st.session_state.ble_manager.connected:
         st.warning("⚠️ 센서 연결이 끊어졌습니다.")
         if st.button("연결 대기 화면으로"):
             disconnect()
     else:
+        # Watchdog: 상단 붉은색 경고 (2초 이상 데이터 없음 / ERR:NO_SENSOR)
+        last_data = st.session_state.get("last_data_time")
+        timeout_sec = 2.0
+        if st.session_state.ble_manager.sensor_status == "error":
+            st.error("🔴 **센서 오류**: MPU6050이 감지되지 않습니다 (ERR:NO_SENSOR). 배선을 확인해 주세요.")
+        elif last_data and (datetime.now() - last_data).total_seconds() > timeout_sec:
+            st.error("🔴 **BLE 타임아웃**: 2초 이상 센서 데이터가 없습니다. 연결을 확인하거나 재연결해 주세요.")
         render_collection_view()

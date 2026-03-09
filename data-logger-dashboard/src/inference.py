@@ -140,8 +140,10 @@ def process_data_queue():
             elif st.session_state.inference_sm_state == 'WAITING_FOR_FUTURE_SAMPLES':
                 st.session_state.samples_after_peak += 1
                 if st.session_state.samples_after_peak >= INFERENCE_FUTURE_SAMPLES:
-                    if len(st.session_state.inference_buffer) >= INFERENCE_WINDOW_SAMPLES:
-                        window_features = list(st.session_state.inference_buffer)[-INFERENCE_WINDOW_SAMPLES:]
+                    buf = st.session_state.inference_buffer
+                    if len(buf) >= INFERENCE_WINDOW_SAMPLES:
+                        # 1.2s asymmetric: [Peak-20 : Peak+40] = 60 samples (peak at index 20 in window)
+                        window_features = list(buf)[-INFERENCE_WINDOW_SAMPLES:]
                         
                         # Validate: reject false positives (e.g. dropping racket)
                         max_mag = 0

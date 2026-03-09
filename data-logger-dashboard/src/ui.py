@@ -7,6 +7,11 @@ from datetime import datetime
 import plotly.graph_objects as go
 
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
+
+# 차트/게이지 한계치 (ESP32 ±2000dps, ±16g 확장 반영)
+GYRO_AXIS_RANGE = [-2000, 2000]
+ACCEL_AXIS_RANGE = [-16, 16]
+GAUGE_MAX_KMH = 180
 from src.data_manager import save_data_to_csv
 from src.styles import styles
 from src.state import init_session_state, load_model_safe, MODELS_DIR
@@ -86,7 +91,22 @@ def render_sidebar():
         
         st.markdown("---")
 
-        # 3. AI Model Status
+        # 3. Dual mode: 코트 / 섀도우 (동적 모델 선택)
+        st.markdown("### 🎾 동작 모드")
+        mode_options = ["🎾 코트 모드", "🏠 섀도우 모드"]
+        current_mode = st.session_state.get("operation_mode", "🎾 코트 모드")
+        idx = 0 if current_mode == mode_options[0] else 1
+        st.session_state.operation_mode = st.radio(
+            "모드",
+            mode_options,
+            index=idx,
+            key="operation_mode_radio",
+            label_visibility="collapsed"
+        )
+
+        st.markdown("---")
+
+        # 4. AI Model Status
         st.markdown("### 🤖 AI Model Settings")
         
         # Scan and list models
@@ -127,7 +147,7 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # 4. Page Navigation
+        # 5. Page Navigation
         st.session_state.active_page = st.radio(
             "📋 Menu",
             ["🔥 Live Coaching", "💾 Data Logger"],
@@ -137,7 +157,7 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # 4. System Settings
+        # 6. System Settings
         with st.expander("🛠️ Settings & WiFi"):
             # Queue Status
             if 'data_queue' in st.session_state:
@@ -250,7 +270,7 @@ if fragment:
             title = {'text': "⚡ SWING SPEED", 'font': {'size': 16, 'color': '#aaa'}},
             gauge = {
                 'axis': {
-                    'range': [0, 150],
+                    'range': [0, GAUGE_MAX_KMH],
                     'tickwidth': 2,
                     'tickcolor': '#666',
                     'dtick': 30,
@@ -264,8 +284,8 @@ if fragment:
                     {'range': [0, 50], 'color': '#1a3a1a'},
                     {'range': [50, 80], 'color': '#2a4a1a'},
                     {'range': [80, 110], 'color': '#4a4a0a'},
-                    {'range': [110, 130], 'color': '#4a2a0a'},
-                    {'range': [130, 150], 'color': '#4a1a1a'}
+                    {'range': [110, 140], 'color': '#4a2a0a'},
+                    {'range': [140, GAUGE_MAX_KMH], 'color': '#4a1a1a'}
                 ],
                 'threshold': {
                     'line': {'color': "#ff0040", 'width': 5},
@@ -299,13 +319,7 @@ if fragment:
         with c2:
             st.metric("Backhand Count", st.session_state.swing_count_bh)
 
-        # 5. Status Warning
-        if st.session_state.get('ble_manager') and st.session_state.ble_manager.sensor_status == "error":
-            st.error("🚨 센서 하드웨어 오류: MPU6050 센서가 감지되지 않습니다. 배선을 확인해 주세요.")
-        else:
-            time_since_last = (datetime.now() - st.session_state.get('last_data_time', datetime.now())).total_seconds()
-            if time_since_last > 2.0:
-                st.warning("⚠️ No data from sensor (Sleeping?)")
+        # 5. Status / Watchdog: BLE timeout & ERR:NO_SENSOR are shown at top in main app
 
         # 6. TTS Speaker & AI Debug Log
         _render_tts_if_needed()
@@ -355,14 +369,22 @@ if fragment:
             with c2:
                 if st.button("🗑️ NO (Discard)"): discard_and_stop()
 
-        # Detailed Graphs
+        # Detailed Graphs (Plotly: fixed axis for ±16g accel, ±2000dps gyro)
         if len(st.session_state.vis_buffer) > 0:
             df = pd.DataFrame(st.session_state.vis_buffer)
-            st.caption("Accelerometer (X, Y, Z)")
-            st.line_chart(df[['accel_x', 'accel_y', 'accel_z']], height=200)
-            
-            st.caption("Gyroscope (X, Y, Z)")
-            st.line_chart(df[['gyro_x', 'gyro_y', 'gyro_z']], height=200)
+            st.caption("Accelerometer (X, Y, Z) — ±16g")
+            acc_fig = go.Figure()
+            for col in ['accel_x', 'accel_y', 'accel_z']:
+                acc_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines'))
+            acc_fig.update_layout(height=200, margin=dict(l=40, r=20, t=20, b=30), yaxis_range=ACCEL_AXIS_RANGE, template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(acc_fig, use_container_width=True, key="logger_accel")
+
+            st.caption("Gyroscope (X, Y, Z) — ±2000 dps")
+            gyro_fig = go.Figure()
+            for col in ['gyro_x', 'gyro_y', 'gyro_z']:
+                gyro_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines'))
+            gyro_fig.update_layout(height=200, margin=dict(l=40, r=20, t=20, b=30), yaxis_range=GYRO_AXIS_RANGE, template='plotly_dark', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(gyro_fig, use_container_width=True, key="logger_gyro")
 
         # TTS Speaker & AI Debug Log
         _render_tts_if_needed()
