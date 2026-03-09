@@ -2,315 +2,183 @@
 #include <NimBLEDevice.h>
 #include <Wire.h>
 
-// --- Configuration ---
+// --- BLE Configuration ---
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define DEVICE_NAME         "Tennis_Sensor_V1"
 
-// MPU6050 I2C Address
-#define MPU6050_ADDR 0x68
+// MPU6050
+#define MPU6050_ADDR    0x68
+#define REG_PWR_MGMT_1  0x6B
+#define REG_GYRO_CONFIG  0x1B   // 0x18 = ±2000 dps
+#define REG_ACCEL_CONFIG 0x1C   // 0x18 = ±16g
+#define REG_ACCEL_XOUT_H 0x3B
 
-// LED Pin (Seeed XIAO ESP32C3)
-// LED_BUILTIN is usually defined. 
-// Logic: Active LOW (LOW = ON, HIGH = OFF)
-#ifndef LED_BUILTIN
-  #define LED_BUILTIN 8 
-#endif
+// Scale factors for ±2000 dps gyro, ±16g accel (set in Init)
+#define GYRO_SCALE  16.4f   // LSB per deg/s
+#define ACCEL_SCALE 2048.0f // LSB per g
 
-// I2C Pins for Seeed XIAO ESP32C3
-#define SDA_PIN D4  // GPIO 6
-#define SCL_PIN D5  // GPIO 7
+// I2C Pins (Seeed XIAO ESP32C3)
+#define SDA_PIN D4
+#define SCL_PIN D5
 
-#define LED_ON  LOW
-#define LED_OFF HIGH
+// Switch: LOW = Recording, HIGH = Standby
+#define SWITCH_PIN D1
 
-// Sampling Rate
-const unsigned long SAMPLING_INTERVAL_MS = 20; // 50Hz
+// Sampling: 50 Hz
+const unsigned long SAMPLING_INTERVAL_MS = 20;
 unsigned long last_sample_time = 0;
 
-// BLE Globals
+// BLE
 NimBLEServer* pServer = NULL;
 NimBLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
-// --- MPU6050 Helper Functions ---
-
+// --- MPU6050 ---
 bool MPU6050_Init() {
-  // Explicitly define pins for XIAO ESP32C3
   if (!Wire.begin(SDA_PIN, SCL_PIN)) {
     Serial.println("I2C Init Failed");
     return false;
   }
-  Wire.setClock(100000); // Reduce to 100kHz for stability checking
+  Wire.setClock(400000); // Fast Mode 400 kHz
 
-  // --- I2C Scanner ---
-  Serial.println("Scanning I2C bus...");
-  int nDevices = 0;
-  for(byte address = 1; address < 127; address++ ) {
-    Wire.beginTransmission(address);
-    byte error = Wire.endTransmission();
-    if (error == 0) {
-      Serial.print("I2C device found at address 0x");
-      if (address < 16) Serial.print("0");
-      Serial.print(address,HEX);
-      Serial.println(" !");
-      nDevices++;
-    } else if (error==4) {
-      Serial.print("Unknown error at address 0x");
-      if (address < 16) Serial.print("0");
-      Serial.println(address,HEX);
-    }
-  }
-  if (nDevices == 0) Serial.println("No I2C devices found\n");
-  else Serial.println("done\n");
-  // -------------------
-  
   // Wake up MPU6050
   Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x6B);  // PWR_MGMT_1 register
-  Wire.write(0);     // set to zero used to wake up the MPU-6050
-  uint8_t error = Wire.endTransmission(true);
-  
-  if (error != 0) {
-    Serial.printf("MPU6050 Wakeup Failed: %d\n", error);
+  Wire.write(REG_PWR_MGMT_1);
+  Wire.write(0);
+  if (Wire.endTransmission(true) != 0) {
+    Serial.println("MPU6050 Wakeup Failed");
     return false;
   }
+
+  // Gyro: ±2000 dps (0x18 → FS_SEL=3)
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(REG_GYRO_CONFIG);
+  Wire.write(0x18);
+  if (Wire.endTransmission(true) != 0) {
+    Serial.println("MPU6050 Gyro Config Failed");
+    return false;
+  }
+
+  // Accel: ±16g (0x18 → AFS_SEL=3)
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(REG_ACCEL_CONFIG);
+  Wire.write(0x18);
+  if (Wire.endTransmission(true) != 0) {
+    Serial.println("MPU6050 Accel Config Failed");
+    return false;
+  }
+
   return true;
 }
 
 bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
   Wire.beginTransmission(MPU6050_ADDR);
-  Wire.write(0x3B);  // starting with register 0x3B (ACCEL_XOUT_H)
-  uint8_t err = Wire.endTransmission(false);
-  if (err != 0) return false;
+  Wire.write(REG_ACCEL_XOUT_H);
+  if (Wire.endTransmission(false) != 0) return false;
 
-  uint8_t bytesReceived = Wire.requestFrom((uint8_t)MPU6050_ADDR, (size_t)14, (bool)true);
-  
-  if (bytesReceived != 14) {
+  if (Wire.requestFrom((uint8_t)MPU6050_ADDR, (size_t)14, (bool)true) != 14)
     return false;
-  }
 
   int16_t raw_ax = Wire.read() << 8 | Wire.read();
   int16_t raw_ay = Wire.read() << 8 | Wire.read();
   int16_t raw_az = Wire.read() << 8 | Wire.read();
-  int16_t raw_temp = Wire.read() << 8 | Wire.read(); // temperature, ignore
+  (void)(Wire.read() << 8 | Wire.read()); // temperature
   int16_t raw_gx = Wire.read() << 8 | Wire.read();
   int16_t raw_gy = Wire.read() << 8 | Wire.read();
   int16_t raw_gz = Wire.read() << 8 | Wire.read();
 
-  // Simple conversion (assuming default scales)
-  // Accel: 16384 LSB/g
-  // Gyro: 131 LSB/deg/s
-  ax = raw_ax / 16384.0;
-  ay = raw_ay / 16384.0;
-  az = raw_az / 16384.0;
-  
-  gx = raw_gx / 131.0;
-  gy = raw_gy / 131.0;
-  gz = raw_gz / 131.0;
-  
+  ax = raw_ax / ACCEL_SCALE;
+  ay = raw_ay / ACCEL_SCALE;
+  az = raw_az / ACCEL_SCALE;
+  gx = raw_gx / GYRO_SCALE;
+  gy = raw_gy / GYRO_SCALE;
+  gz = raw_gz / GYRO_SCALE;
   return true;
 }
 
 // --- BLE Callbacks ---
-class MyServerCallbacks: public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
-        deviceConnected = true;
-        Serial.println("\nClient connected!");
-        // Force update battery value immediately (if initialized)
-        // Note: characteristics might not be subscribed yet, so notification might be ignored 
-        // but setValue is good.
-    };
-
-    void onDisconnect(NimBLEServer* pServer) {
-      deviceConnected = false;
-      Serial.println("\nClient disconnected.");
-    }
+class MyServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* pServer) {
+    (void)pServer;
+    deviceConnected = true;
+    Serial.println("Client connected");
+  }
+  void onDisconnect(NimBLEServer* pServer) {
+    (void)pServer;
+    deviceConnected = false;
+    Serial.println("Client disconnected");
+  }
 };
-
-// Battery Service
-#define BATTERY_SERVICE_UUID "180f"
-#define BATTERY_CHAR_UUID    "2a19"
-#define BAT_PIN              A0 
-// Calibration: 
-// analogRead(A0) -> 0~4095
-// V_BAT = (ADC / 4095) * 3.3V * (Divider Ratio)
-// Example: if using Seeed Xiao Expansion Board, it has voltage divider (R1=R2=100k?). 
-// Actually Xiao ESP32C3 reads VBAT efficiently. 
-// Let's assume raw reading for now or simple mapping 
-// 4.2V = 100%, 3.3V = 0%
-NimBLECharacteristic* pBatCharacteristic = NULL;
-unsigned long last_bat_time = 0;
-
-// Switch Pin
-#define SWITCH_PIN D1 // GPIO 3
 
 void setup() {
   Serial.begin(115200);
-  
-  pinMode(SWITCH_PIN, INPUT_PULLUP); // Switch Input
+  pinMode(SWITCH_PIN, INPUT_PULLUP);
 
-  // Analog Setup
-  analogReadResolution(12);
-  analogSetAttenuation(ADC_11db); 
-
-  // Wait for serial (optional, for debugging)
-  // delay(1000);
-
-  // Init MPU6050
   if (!MPU6050_Init()) {
-    Serial.println("MPU6050 Init Failed - checking loop");
+    Serial.println("MPU6050 Init Failed");
   } else {
-    Serial.println("MPU6050 Initialized");
+    Serial.println("MPU6050 OK (Gyro ±2000dps, Accel ±16g)");
   }
 
-  // Init NimBLE
   NimBLEDevice::init(DEVICE_NAME);
-
-  // Print MAC Address
-  Serial.println();
-  Serial.print("ESP32 Bluetooth MAC Address: ");
+  Serial.print("MAC: ");
   Serial.println(NimBLEDevice::getAddress().toString().c_str());
+
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
-  // --- Sensor Service ---
-  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+  NimBLEService* pService = pServer->createService(SERVICE_UUID);
   pCharacteristic = pService->createCharacteristic(
-                      CHARACTERISTIC_UUID,
-                      NIMBLE_PROPERTY::READ |
-                      NIMBLE_PROPERTY::NOTIFY
-                    );
+      CHARACTERISTIC_UUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   pService->start();
 
-  // --- Battery Service ---
-  NimBLEService *pBatService = pServer->createService(BATTERY_SERVICE_UUID);
-  pBatCharacteristic = pBatService->createCharacteristic(
-                          BATTERY_CHAR_UUID,
-                          NIMBLE_PROPERTY::READ |
-                          NIMBLE_PROPERTY::NOTIFY
-                        );
-  pBatService->start();
-
-  // Start advertising
-  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-  
-  // Create explicit advertisement data
-  NimBLEAdvertisementData oAdvertisementData = NimBLEAdvertisementData();
-  oAdvertisementData.setFlags(0x06); // General_Discoverable | BLE_Only (BR_EDR_NOT_SUPPORTED)
-  // Note: We only advertise the main service UUID to save space/avoid confusion
-  oAdvertisementData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
-  
-  // Create explicit scan response data (Name goes here because it's long)
-  NimBLEAdvertisementData oScanResponseData = NimBLEAdvertisementData();
-  oScanResponseData.setName(DEVICE_NAME);
-
-  pAdvertising->setAdvertisementData(oAdvertisementData);
-  pAdvertising->setScanResponseData(oScanResponseData);
-  
+  NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+  NimBLEAdvertisementData advData;
+  advData.setFlags(0x06);
+  advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  NimBLEAdvertisementData scanData;
+  scanData.setName(DEVICE_NAME);
+  pAdvertising->setAdvertisementData(advData);
+  pAdvertising->setScanResponseData(scanData);
   pAdvertising->start();
-  Serial.print("Waiting for a client connection to notify...");
-  Serial.print(" [MAC: ");
-  Serial.print(NimBLEDevice::getAddress().toString().c_str());
-  Serial.print(" / UUID: ");
-  Serial.print(SERVICE_UUID);
-  Serial.println("]");
-}
 
-// Helper to read battery
-uint8_t readBatteryLevel() {
-    uint32_t raw = analogRead(BAT_PIN);
-    
-    // Xiao ESP32C3 11dB attenuation -> ~2500mV range (or slightly higher, e.g. 2600mV)
-    // Let's assume 2.5V for 4095.
-    // Divider 1/2 -> Max Input 4.2V/2 = 2.1V. Safe.
-    
-    float pin_voltage = (raw / 4095.0) * 2.5; 
-    float battery_voltage = pin_voltage * 2.0; // Divider 2
-    
-    // Simple Percentage Mapping for LiPo (3.3V - 4.2V)
-    int percentage = (int)((battery_voltage - 3.3) / (4.2 - 3.3) * 100);
-    if (percentage > 100) percentage = 100;
-    if (percentage < 0) percentage = 0;
-    
-    // Debug
-    // Serial.printf("Bat ADC: %d -> PinV: %.2fV -> BatV: %.2fV -> %d%%\r\n", raw, pin_voltage, battery_voltage, percentage);
-    
-    return (uint8_t)percentage;
+  Serial.println("BLE advertising started");
 }
 
 void loop() {
-  unsigned long current_time = millis();
+  unsigned long now = millis();
+  bool isRecording = (digitalRead(SWITCH_PIN) == LOW);
 
-  // 1. Read Switch State
-  // LOW = Recording Mode (Switch ON, GND connected)
-  // HIGH = Standby Mode (Switch OFF, Pull-up)
-  bool isRecordingMode = (digitalRead(SWITCH_PIN) == LOW);
-  
-  static bool last_recording_mode = false;
-  if (isRecordingMode != last_recording_mode) {
-      last_recording_mode = isRecordingMode;
-      if (isRecordingMode) {
-          Serial.println("Mode Changed: RECORDING (Switch ON)");
-      } else {
-          Serial.println("Mode Changed: STANDBY (Switch OFF)");
-      }
-  }
+  if (deviceConnected && isRecording && (now - last_sample_time >= SAMPLING_INTERVAL_MS)) {
+    last_sample_time = now;
+    float ax, ay, az, gx, gy, gz;
 
-  // 2. Battery Update (Every 10 seconds)
-  // Only update if connected, or maybe always? Always is fine to keep internal state fresh.
-  if (current_time - last_bat_time >= 10000) {
-      last_bat_time = current_time;
-      uint8_t level = readBatteryLevel();
-      pBatCharacteristic->setValue(&level, 1);
-      if (deviceConnected) {
-          pBatCharacteristic->notify();
-      }
-  }
-
-  // 3. Sampling & Transmission Logic
-  // Only send data if Connected AND in Recording Mode
-  if (deviceConnected && isRecordingMode) {
-    if (current_time - last_sample_time >= SAMPLING_INTERVAL_MS) {
-      last_sample_time = current_time;
-
-      float ax, ay, az, gx, gy, gz;
-      // Try to read sensor
-      if (MPU6050_Read(ax, ay, az, gx, gy, gz)) {
-        // Create CSV string: "ax,ay,az,gx,gy,gz"
-        char dataStr[64]; 
-        int len = snprintf(dataStr, sizeof(dataStr), "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f", 
-                 ax, ay, az, gx, gy, gz);
-        
-        if (len > 0) {
-            pCharacteristic->setValue((uint8_t*)dataStr, len);
-            pCharacteristic->notify();
-        }
-      } else {
-        // I2C Read Failed
-        const char* errStr = "ERR:NO_SENSOR";
-        pCharacteristic->setValue((uint8_t*)errStr, strlen(errStr));
+    if (MPU6050_Read(ax, ay, az, gx, gy, gz)) {
+      char buf[64];
+      int n = snprintf(buf, sizeof(buf), "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f", ax, ay, az, gx, gy, gz);
+      if (n > 0) {
+        pCharacteristic->setValue((uint8_t*)buf, (size_t)n);
         pCharacteristic->notify();
-        
-        // Try to recover MPU connection
-        static unsigned long last_retry_time = 0;
-        if (current_time - last_retry_time > 1000) {
-           last_retry_time = current_time;
-           MPU6050_Init(); // Attempt re-init
-        }
+      }
+    } else {
+      const char* err = "ERR:NO_SENSOR";
+      pCharacteristic->setValue((uint8_t*)err, strlen(err));
+      pCharacteristic->notify();
+      static unsigned long last_retry = 0;
+      if (now - last_retry > 1000) {
+        last_retry = now;
+        MPU6050_Init();
       }
     }
   }
 
-  // 4. Connection Management
   if (!deviceConnected && oldDeviceConnected) {
-      delay(500); // Give the bluetooth stack the chance to get things ready
-      pServer->getAdvertising()->start(); // restart advertising
-      Serial.println("Start advertising");
-      oldDeviceConnected = deviceConnected;
+    delay(500);
+    pServer->getAdvertising()->start();
+    Serial.println("Advertising restarted");
   }
-  if (deviceConnected && !oldDeviceConnected) {
-      oldDeviceConnected = deviceConnected;
-  }
+  oldDeviceConnected = deviceConnected;
 }
