@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Wire.h>
+#include <esp_bt.h>
 
 // --- BLE Configuration ---
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -99,16 +100,21 @@ bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
 }
 
 // --- BLE Callbacks ---
+// NimBLE-Arduino: use NimBLEConnInfo& (wraps ble_gap_conn_desc). For raw desc use: onConnect(..., ble_gap_conn_desc* desc).
 class MyServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* pServer) {
+  void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
     (void)pServer;
     deviceConnected = true;
     Serial.println("Client connected");
+    // Supervision timeout 100 * 10ms = 1s: drop connection if peer (e.g. Pi) does not respond
+    uint16_t conn_handle = connInfo.getConnHandle();
+    pServer->updateConnParams(conn_handle, 24, 40, 0, 100);
   }
-  void onDisconnect(NimBLEServer* pServer) {
+  void onDisconnect(NimBLEServer* pServer) override {
     (void)pServer;
     deviceConnected = false;
     Serial.println("Client disconnected");
+    NimBLEDevice::startAdvertising();
   }
 };
 
@@ -123,6 +129,7 @@ void setup() {
   }
 
   NimBLEDevice::init(DEVICE_NAME);
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
   Serial.print("MAC: ");
   Serial.println(NimBLEDevice::getAddress().toString().c_str());
 

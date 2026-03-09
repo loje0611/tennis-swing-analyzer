@@ -40,6 +40,7 @@ class RealBLEManager(BLEManager):
         self.thread: Optional[threading.Thread] = None
         self.queue_overflow_count = 0
         self.last_error = None
+        self._disconnect_event = threading.Event()
 
     async def scan(self) -> Tuple[bool, str, Optional[object]]:
         try:
@@ -97,7 +98,7 @@ class RealBLEManager(BLEManager):
     def start_connection(self, address: str):
         if self.running:
             return
-        
+        self._disconnect_event.clear()
         self.running = True
         self.thread = threading.Thread(target=self._run_async_loop, args=(address,), daemon=True)
         self.thread.start()
@@ -116,35 +117,30 @@ class RealBLEManager(BLEManager):
 
     async def _connect_and_collect(self, address: str):
         try:
-            # 4. 재연결 안정성: 좀비 연결 방지
             if self.client and self.client.is_connected:
                 logger.info("기존 연결 해제 중...")
                 await self.client.disconnect()
-                
+
             self.client = BleakClient(address)
             await self.client.connect()
             logger.info(f"BLE 연결 성공: {address}")
             self.connected = True
-            
-            # Debug: List all services
+
             logger.info("--- 서비스 목록 ---")
             for service in self.client.services:
                 logger.info(f"Service: {service.uuid} ({service.description})")
                 for char in service.characteristics:
                     logger.info(f"  - Char: {char.uuid} ({char.properties})")
             logger.info("-------------------")
-            
+
             def notification_handler(sender, data: bytearray):
                 try:
                     decoded = data.decode('utf-8').strip()
-                    
                     if decoded == "ERR:NO_SENSOR":
-                         self.sensor_status = "error"
-                         return
-
+                        self.sensor_status = "error"
+                        return
                     parts = decoded.split(',')
                     if len(parts) == 6:
-                        # Sensor is OK
                         self.sensor_status = "ok"
                         timestamp = datetime.now()
                         data_point = {
@@ -167,37 +163,34 @@ class RealBLEManager(BLEManager):
                                 pass
                 except Exception as e:
                     logger.warning(f"데이터 파싱 오류: {e}")
-            
-
 
             await self.client.start_notify(CHARACTERISTIC_UUID, notification_handler)
             logger.info("Notification 시작됨")
-            
-            while self.running and self.client.is_connected:
+
+            # Graceful shutdown: break when _disconnect_event is set (e.g. atexit/stop)
+            while self.running and self.client.is_connected and not self._disconnect_event.is_set():
                 await asyncio.sleep(0.1)
-            
-            if self.client.is_connected:
-                try:
-                    await self.client.stop_notify(CHARACTERISTIC_UUID)
-                except Exception: pass
-                await self.client.disconnect()
-            
+
         except Exception as e:
             logger.error(f"BLE 연결/수집 오류: {e}")
             self.last_error = str(e)
         finally:
             self.connected = False
-            if self.client and self.client.is_connected:
+            # 확실한 disconnect: BlueZ 캐시 정리를 위해 항상 disconnect 실행
+            if self.client:
                 try:
-                    await self.client.stop_notify(CHARACTERISTIC_UUID)
+                    if self.client.is_connected:
+                        await self.client.stop_notify(CHARACTERISTIC_UUID)
                 except Exception:
                     pass
                 try:
                     await self.client.disconnect()
                 except Exception:
                     pass
+                self.client = None
 
     def stop(self):
+        self._disconnect_event.set()
         self.running = False
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)

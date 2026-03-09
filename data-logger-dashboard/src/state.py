@@ -1,4 +1,5 @@
 import os
+import atexit
 import streamlit as st
 from collections import deque
 from datetime import datetime
@@ -20,9 +21,11 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "models")
 
 @st.cache_resource
 def get_cached_ble_manager():
-    """Connection Persistence — Global Singleton."""
+    """Connection Persistence — Global Singleton. Registers atexit for graceful BLE disconnect."""
     print("Initializing RealBLEManager (Cached)")
-    return RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
+    manager = RealBLEManager(Queue(maxsize=MAX_QUEUE_SIZE))
+    atexit.register(manager.stop)
+    return manager
 
 
 def load_model_safe(model_path):
