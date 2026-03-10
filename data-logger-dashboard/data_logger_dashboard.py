@@ -1,10 +1,11 @@
 import streamlit as st
 import asyncio
 import logging
+import time
 from datetime import datetime
 from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
-from src.ui import render_sidebar, render_connection_view, render_collection_view
+from src.ui import render_sidebar, render_connection_view, render_collection_view, render_global_header
 from src.state import init_session_state
 
 # Early initialization of session state to load models
@@ -16,34 +17,10 @@ st.set_page_config(
 )
 
 # --- 2. 세션 상태 초기화 ---
-# Early initialization of session state to load models and check connection
-# This will now set up 'ble_manager' using cache and auto-recover 'view'
 init_session_state()
 
-# --- 3. 로깅 설정 --
+# --- 3. 로깅 설정 ---
 logging.basicConfig(level=logging.INFO)
-
-# 연결 해제 콜백 정의
-def disconnect():
-    if 'ble_manager' in st.session_state:
-        st.session_state.ble_manager.stop()
-    st.session_state.view = 'connection'
-    st.session_state.collection_state = 'ready'
-    st.session_state.log_buffer = []
-    st.session_state.is_logging = False
-    if 'vis_buffer' in st.session_state:
-        st.session_state.vis_buffer.clear()
-    
-    # 큐 비우기
-    while not st.session_state.data_queue.empty():
-        try:
-            st.session_state.data_queue.get_nowait()
-        except:
-            break
-    
-    st.rerun()
-
-st.session_state.disconnect_func = disconnect
 
 # --- 4. 스캔 및 연결 함수 ---
 def scan_and_connect():
@@ -81,6 +58,7 @@ def scan_and_connect():
 
 # --- 5. UI 렌더링 ---
 render_sidebar()
+render_global_header()
 
 # Fallback safety check
 if 'view' not in st.session_state:
@@ -90,11 +68,8 @@ if 'view' not in st.session_state:
 if st.session_state.view == 'connection':
     render_connection_view(scan_and_connect)
 else:
-    # 연결 끊김 체크
     if not st.session_state.ble_manager.connected:
-        st.warning("⚠️ 센서 연결이 끊어졌습니다.")
-        if st.button("연결 대기 화면으로"):
-            disconnect()
+        st.warning("⚠️ 센서 연결이 끊어졌습니다. 사이드바에서 연결 화면으로 이동하거나 기기를 다시 연결해 주세요.")
     else:
         # Watchdog: 상단 붉은색 경고 (2초 이상 데이터 없음 / ERR:NO_SENSOR)
         last_data = st.session_state.get("last_data_time")
@@ -104,3 +79,8 @@ else:
         elif last_data and (datetime.now() - last_data).total_seconds() > timeout_sec:
             st.error("🔴 **BLE 타임아웃**: 2초 이상 센서 데이터가 없습니다. 연결을 확인하거나 재연결해 주세요.")
         render_collection_view()
+
+        # Data Logger 탭: 전체 렌더 후 자동 재실행 (Rerun 기반, 플리커링 없음)
+        if st.session_state.active_page != "🔥 Live Coaching":
+            time.sleep(0.2)  # 약 5 FPS
+            st.rerun()

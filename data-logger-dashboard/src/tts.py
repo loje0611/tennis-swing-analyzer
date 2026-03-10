@@ -1,30 +1,35 @@
 import streamlit as st
 import streamlit.components.v1 as components
 
+from src.settings_persistence import get_settings, save_settings
 
-def render_tts_audio_button():
-    """Render '🔊 오디오 켜기' button to unlock mobile browser audio policy.
-    
-    Mobile browsers require a user gesture before speechSynthesis can speak.
-    This button performs a silent speak() call to unlock the audio context,
-    then sets tts_enabled=True so future TTS calls work automatically.
-    """
-    if st.session_state.get('tts_enabled', False):
-        st.success("🔊 오디오 활성화됨")
-        return
 
-    if st.button("🔊 오디오 켜기", type="primary", use_container_width=True):
-        # Inject silent speech to unlock mobile audio policy
+def _on_tts_toggle():
+    """Persist TTS toggle to settings.json and keep session state in sync."""
+    new_value = st.session_state.get("tts_toggle_key", False)
+    save_settings(tts_enabled=new_value)
+    st.session_state.tts_enabled = new_value
+
+
+def render_tts_audio_toggle():
+    """Render TTS on/off toggle; value persisted to settings.json across restarts."""
+    current = st.session_state.get("tts_enabled", get_settings().get("tts_enabled", False))
+    st.toggle(
+        "🔊 오디오",
+        value=current,
+        key="tts_toggle_key",
+        on_change=_on_tts_toggle,
+    )
+    # One-time unlock for mobile when turning on (user gesture = toggle click)
+    if current and not st.session_state.get("tts_unlock_done"):
         components.html("""
         <script>
-            const unlockUtter = new SpeechSynthesisUtterance('');
-            unlockUtter.volume = 0;
-            unlockUtter.lang = 'ko-KR';
-            window.speechSynthesis.speak(unlockUtter);
+            var u = new SpeechSynthesisUtterance('');
+            u.volume = 0; u.lang = 'ko-KR';
+            window.speechSynthesis.speak(u);
         </script>
         """, height=0)
-        st.session_state.tts_enabled = True
-        st.rerun()
+        st.session_state.tts_unlock_done = True
 
 
 def render_tts_speaker(message, swing_id):

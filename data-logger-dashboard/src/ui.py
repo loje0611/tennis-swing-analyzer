@@ -12,8 +12,24 @@ GAUGE_MAX_KMH = 180
 from src.data_manager import save_data_to_csv, get_label_file_counts
 from src.styles import styles
 from src.state import init_session_state, load_model_safe, MODELS_DIR
-from src.tts import render_tts_audio_button, render_tts_speaker
+from src.tts import render_tts_audio_toggle, render_tts_speaker
 from src.inference import process_data_queue
+
+
+# --- 글로벌 헤더 (메인 화면 최상단, 모바일 가시성) ---
+def render_global_header():
+    """메인 영역 최상단: 앱 타이틀 + 센서 연결 상태 뱃지 (사이드바 접힐 때 대비)."""
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("## 🎾 Tennis Analyst")
+    with col2:
+        if st.session_state.get("ble_manager") and st.session_state.ble_manager.connected:
+            if st.session_state.ble_manager.sensor_status == "error":
+                st.error("🔴 Sensor Error")
+            else:
+                st.success("🟢 Sensor Connected")
+        else:
+            st.error("🔴 Disconnected")
 
 
 # --- 공통 UI 헬퍼 함수 ---
@@ -61,100 +77,76 @@ except ImportError:
         fragment = None
 
 
+def _derive_operation_mode_from_filename(filename):
+    """eim 파일명에서 코트/섀도우 모드 추론 (스플릿 브레인 방지)."""
+    if not filename:
+        return "🎾 코트 모드"
+    name_lower = filename.lower()
+    if "shadow" in name_lower:
+        return "🏠 섀도우 모드"
+    return "🎾 코트 모드"
+
+
 def render_sidebar():
     with st.sidebar:
         st.title("⚙️ System Control")
-        
-        # 1. Connection Status
-        st.markdown("### 📡 Connection")
-        if st.session_state.get('ble_manager') and st.session_state.ble_manager.connected:
-            st.success("🟢 Connected")
-            
-            # Sensor hardware error detection
-            if st.session_state.ble_manager.sensor_status == "error":
-                st.error("🔴 Sensor HW Error (MPU6050 not found)")
-            
-            if st.button("Disconnect", type="secondary"):
-                if 'disconnect_func' in st.session_state:
-                    st.session_state.disconnect_func()
-        else:
-            st.error("⚪ Disconnected")
-            
-        st.markdown("---")
 
-        # 2. TTS Audio Control
-        st.markdown("### 🔊 Audio")
-        render_tts_audio_button()
-        
-        st.markdown("---")
-
-        # 3. Dual mode: 코트 / 섀도우 (동적 모델 선택)
-        st.markdown("### 🎾 동작 모드")
-        mode_options = ["🎾 코트 모드", "🏠 섀도우 모드"]
-        current_mode = st.session_state.get("operation_mode", "🎾 코트 모드")
-        idx = 0 if current_mode == mode_options[0] else 1
-        st.session_state.operation_mode = st.radio(
-            "모드",
-            mode_options,
-            index=idx,
-            key="operation_mode_radio",
+        # 1. Menu (Live Coaching / Data Logger)
+        st.markdown("### 📋 Menu")
+        st.session_state.active_page = st.radio(
+            "Menu",
+            ["🔥 Live Coaching", "📊 Data Logger"],
+            index=0 if st.session_state.active_page == "🔥 Live Coaching" else 1,
+            key="nav_radio",
             label_visibility="collapsed"
         )
-
         st.markdown("---")
 
-        # 4. AI Model Status
-        st.markdown("### 🤖 AI Model Settings")
-        
-        # Scan and list models
+        # 2. AI Brain (eim 모델 선택 → operation_mode 자동 할당)
+        st.markdown("### 🤖 AI Brain")
         eim_files = []
         if os.path.exists(MODELS_DIR):
             eim_files = [f for f in os.listdir(MODELS_DIR) if f.endswith('.eim')]
-            
+
         if not eim_files:
-            st.warning("No .eim models found in models folder.")
+            st.warning("No .eim models found.")
         else:
             current_idx = 0
             if getattr(st.session_state, 'current_model_path', None):
                 current_base = os.path.basename(st.session_state.current_model_path)
                 if current_base in eim_files:
                     current_idx = eim_files.index(current_base)
-            
+
             selected_model = st.selectbox(
-                "Select Model File",
+                "Model File",
                 eim_files,
                 index=current_idx,
-                key="model_selectbox"
+                key="model_selectbox",
+                label_visibility="collapsed"
             )
-            
-            # If the user changed the model via selectbox, reload it
+
             if selected_model:
                 selected_model_path = os.path.join(MODELS_DIR, selected_model)
+                st.session_state.operation_mode = _derive_operation_mode_from_filename(selected_model)
                 if getattr(st.session_state, 'current_model_path', None) != selected_model_path:
                     with st.spinner(f"Loading {selected_model}..."):
                         load_model_safe(selected_model_path)
                     st.rerun()
-        
+
         if st.session_state.get('model_load_error'):
-            st.warning(f"⚠️ Error: {st.session_state.model_load_error}")
+            st.warning(f"⚠️ {st.session_state.model_load_error}")
         elif st.session_state.get('runner'):
-            st.success("✅ Model Loaded Active")
+            st.success("✅ Model Loaded")
         else:
-            st.info("ℹ️ Not available")
-
+            st.caption("ℹ️ No model")
         st.markdown("---")
 
-        # 5. Page Navigation
-        st.session_state.active_page = st.radio(
-            "📋 Menu",
-            ["🔥 Live Coaching", "📊 Data Logger"],
-            index=0 if st.session_state.active_page == "🔥 Live Coaching" else 1,
-            key="nav_radio"
-        )
-        
+        # 3. Preferences (오디오 토글, settings.json 영구 저장)
+        st.markdown("### 🔊 Preferences")
+        render_tts_audio_toggle()
         st.markdown("---")
-        
-        # 6. System Settings
+
+        # 4. Settings & WiFi (하단)
         with st.expander("🛠️ Settings & WiFi"):
             # Queue Status
             if 'data_queue' in st.session_state:
@@ -322,19 +314,14 @@ if fragment:
         _render_tts_if_needed()
         _render_ai_debug_log()
 
-    @fragment(run_every=0.5)
     def render_logger_tab():
+        # 큐 비우기 → vis_buffer 반영 (process_data_queue가 큐를 소비하고 vis_buffer에 추가)
         process_data_queue()
 
-        # 메인 차트: st.line_chart 네이티브 (Zero-Flicker), 고정 높이 컨테이너로 레이아웃 붕괴 방지
+        # 메인 차트: st.empty() 없이 네이티브 st.line_chart만 사용 → DOM 유지, 플리커링 제거
         GYRO_NORM_DIVISOR = 125.0
         st.caption("📈 실시간 센서 (가속도 · 자이로 norm)")
-        # 높이 450px 강제 고정 — 내부 empty 수축 시에도 하단 UI가 흔들리지 않음
         with st.container(height=450, border=False):
-            chart_placeholder = st.empty()
-        now_ui = time.time()
-        last_ui_update = st.session_state.get("last_logger_chart_time", 0.0)
-        if now_ui - last_ui_update >= 0.25:
             buf = st.session_state.vis_buffer
             if len(buf) > 0:
                 raw = pd.DataFrame(list(buf))
@@ -346,11 +333,10 @@ if fragment:
                     "gy_norm": raw["gyro_y"] / GYRO_NORM_DIVISOR,
                     "gz_norm": raw["gyro_z"] / GYRO_NORM_DIVISOR,
                 })
-                chart_placeholder.line_chart(df, height=400)
+                st.line_chart(df, height=400)
             else:
                 df_empty = pd.DataFrame(columns=["ax", "ay", "az", "gx_norm", "gy_norm", "gz_norm"])
-                chart_placeholder.line_chart(df_empty, height=400)
-            st.session_state.last_logger_chart_time = now_ui
+                st.line_chart(df_empty, height=400)
 
         # 시인성 극대화: 현재 배치 수집 진행도 (큼지막한 숫자)
         target = st.session_state.get("batch_swings_target", 10)

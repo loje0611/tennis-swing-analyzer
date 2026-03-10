@@ -6,6 +6,7 @@ from datetime import datetime
 from queue import Queue
 from src.config import MAX_QUEUE_SIZE, INFERENCE_WINDOW_SAMPLES, INFERENCE_BUFFER_SIZE
 from src.ble_manager import RealBLEManager
+from src.settings_persistence import get_settings
 
 # Edge Impulse Import
 try:
@@ -111,8 +112,9 @@ def init_session_state():
     # Recent Shots History (last 5)
     if 'recent_shots' not in st.session_state: st.session_state.recent_shots = deque(maxlen=5)
 
-    # TTS (Text-to-Speech) State
-    if 'tts_enabled' not in st.session_state: st.session_state.tts_enabled = False
+    # TTS (Text-to-Speech) State — persisted via settings.json
+    if 'tts_enabled' not in st.session_state:
+        st.session_state.tts_enabled = get_settings().get("tts_enabled", False)
     if 'tts_message' not in st.session_state: st.session_state.tts_message = ""
     if 'tts_swing_id' not in st.session_state: st.session_state.tts_swing_id = ""
     if 'tts_last_spoken_id' not in st.session_state: st.session_state.tts_last_spoken_id = ""
