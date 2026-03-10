@@ -111,16 +111,9 @@ def process_data_queue():
         st.session_state.log_buffer.extend(items)
     if not peak_detected_this_batch:
         st.session_state.last_peak_samples_ago = st.session_state.get('last_peak_samples_ago', 9999) + len(items)
-    # Data Logger 미니 차트: 피크 감지 시 vis_buffer 마지막 60샘플 저장 (모델 없어도 표시)
-    if peak_detected_this_batch and len(st.session_state.vis_buffer) >= 60:
-        tail = list(st.session_state.vis_buffer)[-60:]
-        st.session_state.last_captured_swing_data = [
-            [p['accel_x'], p['accel_y'], p['accel_z'], p['gyro_x'], p['gyro_y'], p['gyro_z']]
-            for p in tail
-        ]
-    
-    # --- Inference & Counting ---
-    if st.session_state.get('runner'):
+    # --- Inference & Counting (Live Coaching 전용: True Peak 정렬 후 모델 추론) ---
+    # Data Logger 모드에서는 정렬/추론 생략, 단순 피크 카운트만 사용
+    if st.session_state.get('runner') and st.session_state.get('active_page') == "🔥 Live Coaching":
         if getattr(st.session_state.inference_buffer, "maxlen", 0) < INFERENCE_BUFFER_SIZE:
             old_data = list(st.session_state.inference_buffer)
             st.session_state.inference_buffer = deque(old_data, maxlen=INFERENCE_BUFFER_SIZE)
@@ -230,8 +223,6 @@ def process_data_queue():
                         else:
                             # 슬라이스 범위 부족 (버퍼 끝에 너무 가까움) → 다음 트리거 대기
                             st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
-                    else:
-                        st.session_state.inference_sm_state = 'WAITING_FOR_PEAK'
 
         # --- Always-on Inference for Debugging ---
         st.session_state.inference_debug_buffer_len = len(st.session_state.inference_buffer)

@@ -5,7 +5,6 @@ import time
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
 
@@ -330,80 +329,59 @@ if fragment:
     def render_logger_tab():
         process_data_queue()
 
-        # Labeling & controls (compact row)
-        with st.expander("🏷️ Labeling Settings", expanded=False):
+        # 상단: Total Files Saved (눈에 띄는 위치)
+        st.markdown(
+            f"<p style='text-align: right; font-size: 1.1rem; color: #888; margin: -0.5rem 0 0.5rem 0;'>"
+            f"📁 Total Files Saved: <strong>{st.session_state.get('total_files_saved', 0)}</strong></p>",
+            unsafe_allow_html=True
+        )
+
+        # 메인 차트 (전체 너비, 상단 시원하게)
+        st.caption("📈 실시간 센서 (가속도 · 자이로)")
+        if len(st.session_state.vis_buffer) > 0:
+            df = pd.DataFrame(st.session_state.vis_buffer)
+            main_fig = go.Figure()
+            for col in ['accel_x', 'accel_y', 'accel_z']:
+                main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y'))
+            for col in ['gyro_x', 'gyro_y', 'gyro_z']:
+                main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y2'))
+            main_fig.update_layout(
+                height=260,
+                margin=dict(l=40, r=50, t=24, b=30),
+                yaxis=dict(range=ACCEL_AXIS_RANGE, title='accel (g)', side='left'),
+                yaxis2=dict(range=GYRO_AXIS_RANGE, title='gyro (dps)', side='right', overlaying='y'),
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            )
+            peak_samples_ago = st.session_state.get('last_peak_samples_ago', 9999)
+            buf_len = len(st.session_state.vis_buffer)
+            if buf_len > 0 and 0 <= (buf_len - 1 - peak_samples_ago) < buf_len:
+                peak_x = buf_len - 1 - peak_samples_ago
+                main_fig.add_vline(x=peak_x, line_dash="dash", line_color="red", line_width=2)
+            st.plotly_chart(main_fig, use_container_width=True, key="logger_main_chart")
+        else:
+            st.info("센서 데이터 대기 중…")
+
+        # 시인성 극대화: 현재 배치 수집 진행도 (큼지막한 숫자)
+        target = st.session_state.get('batch_swings_target', 10)
+        current = st.session_state.get('session_peak_count', 0)
+        progress_val = min(1.0, current / target) if target > 0 else 0.0
+        st.markdown("<p style='margin: 1rem 0 0.25rem 0; font-size: 0.95rem; color: #aaa;'>현재 파일 수집 진행도</p>", unsafe_allow_html=True)
+        st.markdown(
+            f"<p style='font-size: 3.2rem; font-weight: bold; text-align: center; margin: 0.25rem 0; line-height: 1.2;'>{current} / {target} 스윙</p>",
+            unsafe_allow_html=True
+        )
+        st.progress(progress_val)
+
+        # 컨트롤 + 라벨 설정
+        with st.expander("🏷️ 라벨 설정 · 로깅 제어", expanded=False):
             c1, c2 = st.columns(2)
             with c1:
                 st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_log")
             with c2:
                 st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
-
-        # --- No-scroll layout: Main Chart (left 2) | Mini Chart + Counters (right 1) ---
-        col_main, col_side = st.columns([2, 1])
-
-        with col_main:
-            st.caption("📈 Main Chart — 실시간 (가속도·자이로)")
-            if len(st.session_state.vis_buffer) > 0:
-                df = pd.DataFrame(st.session_state.vis_buffer)
-                main_fig = go.Figure()
-                for col in ['accel_x', 'accel_y', 'accel_z']:
-                    main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y'))
-                for col in ['gyro_x', 'gyro_y', 'gyro_z']:
-                    main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y2'))
-                main_fig.update_layout(
-                    height=280,
-                    margin=dict(l=40, r=50, t=24, b=30),
-                    yaxis=dict(range=ACCEL_AXIS_RANGE, title='accel (g)', side='left'),
-                    yaxis2=dict(range=GYRO_AXIS_RANGE, title='gyro (dps)', side='right', overlaying='y'),
-                    template='plotly_dark',
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                )
-                # Peak 수직선: 피크 감지 시점에 빨간 점선
-                peak_samples_ago = st.session_state.get('last_peak_samples_ago', 9999)
-                buf_len = len(st.session_state.vis_buffer)
-                if buf_len > 0 and 0 <= (buf_len - 1 - peak_samples_ago) < buf_len:
-                    peak_x = buf_len - 1 - peak_samples_ago
-                    main_fig.add_vline(x=peak_x, line_dash="dash", line_color="red", line_width=2)
-                st.plotly_chart(main_fig, use_container_width=True, key="logger_main_chart")
-            else:
-                st.info("센서 데이터 대기 중…")
-
-        with col_side:
-            # Last Captured Swing (1.2s 미니 차트) — 6축, 이중 Y축, 피크 기준선
-            st.caption("🎾 Last Captured Swing (1.2s)")
-            cap = st.session_state.get('last_captured_swing_data', [])
-            if len(cap) >= 60:
-                # cap: list of [ax, ay, az, gx, gy, gz] per sample
-                idx = list(range(len(cap)))
-                mini_fig = make_subplots(specs=[[{"secondary_y": True}]])
-                # 가속도 3선 — 왼쪽 Y축 (secondary_y=False)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[0] for r in cap], name="accel_x", mode="lines"), secondary_y=False)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[1] for r in cap], name="accel_y", mode="lines"), secondary_y=False)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[2] for r in cap], name="accel_z", mode="lines"), secondary_y=False)
-                # 자이로 3선 — 오른쪽 Y축 (secondary_y=True)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[3] for r in cap], name="gyro_x", mode="lines"), secondary_y=True)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[4] for r in cap], name="gyro_y", mode="lines"), secondary_y=True)
-                mini_fig.add_trace(go.Scatter(x=idx, y=[r[5] for r in cap], name="gyro_z", mode="lines"), secondary_y=True)
-                mini_fig.update_yaxes(range=ACCEL_AXIS_RANGE, title_text="accel (g)", secondary_y=False)
-                mini_fig.update_yaxes(range=GYRO_AXIS_RANGE, title_text="gyro (dps)", secondary_y=True)
-                # 피크 기준선: 60샘플 중 20번째(비대칭 윈도우의 피크 위치)
-                mini_fig.add_vline(x=20, line_dash="dash", line_color="red", line_width=2)
-                mini_fig.update_layout(
-                    height=200,
-                    margin=dict(l=36, r=36, t=8, b=36),
-                    template="plotly_dark",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    showlegend=True,
-                    legend=dict(orientation="h", yanchor="top", y=-0.22, xanchor="center", x=0.5, font=dict(size=9)),
-                )
-                st.plotly_chart(mini_fig, use_container_width=True, key="logger_mini_chart")
-            else:
-                st.caption("스윙 시 1.2초 구간이 여기 표시됩니다.")
-
-            # 컨트롤
             if not st.session_state.is_logging:
                 if st.button("🔴 Start Logging", type="primary", use_container_width=True, key="btn_start_log"):
                     start_logging()
@@ -411,26 +389,14 @@ if fragment:
                 if st.button("💾 Stop & Save", type="primary", use_container_width=True, key="btn_stop_log"):
                     confirm_stop_logging()
 
-            # 현재 파일 진행률 (Progress)
-            target = st.session_state.get('batch_swings_target', 10)
-            current = st.session_state.get('session_peak_count', 0)
-            progress_val = min(1.0, current / target) if target > 0 else 0.0
-            st.progress(progress_val)
-            st.caption(f"현재 파일 진행률: **{current} / {target}** 스윙")
-
-            # 총 저장 파일 수 (Metric)
-            st.metric("Total Files Saved", st.session_state.get('total_files_saved', 0))
-
-        # Save Confirmation
         if st.session_state.get('show_save_confirm', False):
-            st.warning("Save recorded data?")
+            st.warning("저장할까요?")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("✅ YES (Save)", key="btn_yes_save"): save_and_stop()
+                if st.button("✅ 저장", key="btn_yes_save"): save_and_stop()
             with c2:
-                if st.button("🗑️ NO (Discard)", key="btn_no_discard"): discard_and_stop()
+                if st.button("🗑️ 취소", key="btn_no_discard"): discard_and_stop()
 
-        # Data Logger에서는 추론 확률 로그 미표시 (Live Coaching 전용)
         _render_tts_if_needed()
 
 else:
