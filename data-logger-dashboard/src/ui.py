@@ -5,7 +5,7 @@ import time
 import pandas as pd
 import plotly.graph_objects as go
 
-from src.config import MAX_QUEUE_SIZE, SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
+from src.config import SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
 
 # 차트/게이지 한계치 (ESP32 ±16g 확장 반영)
 GAUGE_MAX_KMH = 180
@@ -148,11 +148,6 @@ def render_sidebar():
 
         # 4. Settings & WiFi (하단)
         with st.expander("🛠️ Settings & WiFi"):
-            # Queue Status
-            if 'data_queue' in st.session_state:
-                q_size = st.session_state.data_queue.qsize()
-                st.caption(f"Buffer: {q_size}/{MAX_QUEUE_SIZE}")
-
             # Smart WiFi 
             if st.button("WiFi Scan"):
                  st.info("Scanning...")

@@ -3,7 +3,6 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
 from src.ui import render_sidebar, render_connection_view, render_collection_view, render_global_header
 from src.state import init_session_state
