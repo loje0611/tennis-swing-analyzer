@@ -2,7 +2,6 @@ import streamlit as st
 import asyncio
 import logging
 from datetime import datetime
-from queue import Queue
 from src.config import MAX_QUEUE_SIZE
 from src.ble_manager import RealBLEManager
 from src.ui import render_sidebar, render_connection_view, render_collection_view
@@ -23,7 +22,6 @@ init_session_state()
 
 # --- 3. 로깅 설정 --
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # 연결 해제 콜백 정의
 def disconnect():

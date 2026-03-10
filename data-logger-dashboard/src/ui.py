@@ -3,16 +3,13 @@ import subprocess
 import os
 import time
 import pandas as pd
-from datetime import datetime
 import plotly.graph_objects as go
 
 from src.config import MAX_QUEUE_SIZE, SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
 
-# 차트/게이지 한계치 (ESP32 ±2000dps, ±16g 확장 반영)
-GYRO_AXIS_RANGE = [-2000, 2000]
-ACCEL_AXIS_RANGE = [-16, 16]
+# 차트/게이지 한계치 (ESP32 ±16g 확장 반영)
 GAUGE_MAX_KMH = 180
-from src.data_manager import save_data_to_csv
+from src.data_manager import save_data_to_csv, get_label_file_counts
 from src.styles import styles
 from src.state import init_session_state, load_model_safe, MODELS_DIR
 from src.tts import render_tts_audio_button, render_tts_speaker
@@ -329,49 +326,40 @@ if fragment:
     def render_logger_tab():
         process_data_queue()
 
-        # 상단: Total Files Saved (눈에 띄는 위치)
-        st.markdown(
-            f"<p style='text-align: right; font-size: 1.1rem; color: #888; margin: -0.5rem 0 0.5rem 0;'>"
-            f"📁 Total Files Saved: <strong>{st.session_state.get('total_files_saved', 0)}</strong></p>",
-            unsafe_allow_html=True
-        )
-
-        # 메인 차트 (전체 너비, 상단 시원하게)
-        st.caption("📈 실시간 센서 (가속도 · 자이로)")
-        if len(st.session_state.vis_buffer) > 0:
-            df = pd.DataFrame(st.session_state.vis_buffer)
-            main_fig = go.Figure()
-            for col in ['accel_x', 'accel_y', 'accel_z']:
-                main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y'))
-            for col in ['gyro_x', 'gyro_y', 'gyro_z']:
-                main_fig.add_trace(go.Scatter(y=df[col], name=col, mode='lines', yaxis='y2'))
-            main_fig.update_layout(
-                height=260,
-                margin=dict(l=40, r=50, t=24, b=30),
-                yaxis=dict(range=ACCEL_AXIS_RANGE, title='accel (g)', side='left'),
-                yaxis2=dict(range=GYRO_AXIS_RANGE, title='gyro (dps)', side='right', overlaying='y'),
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-            )
-            peak_samples_ago = st.session_state.get('last_peak_samples_ago', 9999)
-            buf_len = len(st.session_state.vis_buffer)
-            if buf_len > 0 and 0 <= (buf_len - 1 - peak_samples_ago) < buf_len:
-                peak_x = buf_len - 1 - peak_samples_ago
-                main_fig.add_vline(x=peak_x, line_dash="dash", line_color="red", line_width=2)
-            st.plotly_chart(main_fig, use_container_width=True, key="logger_main_chart")
-        else:
-            st.info("센서 데이터 대기 중…")
+        # 메인 차트: st.line_chart 네이티브 (Zero-Flicker), 고정 높이 컨테이너로 레이아웃 붕괴 방지
+        GYRO_NORM_DIVISOR = 125.0
+        st.caption("📈 실시간 센서 (가속도 · 자이로 norm)")
+        # 높이 450px 강제 고정 — 내부 empty 수축 시에도 하단 UI가 흔들리지 않음
+        with st.container(height=450, border=False):
+            chart_placeholder = st.empty()
+        now_ui = time.time()
+        last_ui_update = st.session_state.get("last_logger_chart_time", 0.0)
+        if now_ui - last_ui_update >= 0.25:
+            buf = st.session_state.vis_buffer
+            if len(buf) > 0:
+                raw = pd.DataFrame(list(buf))
+                df = pd.DataFrame({
+                    "ax": raw["accel_x"],
+                    "ay": raw["accel_y"],
+                    "az": raw["accel_z"],
+                    "gx_norm": raw["gyro_x"] / GYRO_NORM_DIVISOR,
+                    "gy_norm": raw["gyro_y"] / GYRO_NORM_DIVISOR,
+                    "gz_norm": raw["gyro_z"] / GYRO_NORM_DIVISOR,
+                })
+                chart_placeholder.line_chart(df, height=400)
+            else:
+                df_empty = pd.DataFrame(columns=["ax", "ay", "az", "gx_norm", "gy_norm", "gz_norm"])
+                chart_placeholder.line_chart(df_empty, height=400)
+            st.session_state.last_logger_chart_time = now_ui
 
         # 시인성 극대화: 현재 배치 수집 진행도 (큼지막한 숫자)
-        target = st.session_state.get('batch_swings_target', 10)
-        current = st.session_state.get('session_peak_count', 0)
+        target = st.session_state.get("batch_swings_target", 10)
+        current = st.session_state.get("session_peak_count", 0)
         progress_val = min(1.0, current / target) if target > 0 else 0.0
         st.markdown("<p style='margin: 1rem 0 0.25rem 0; font-size: 0.95rem; color: #aaa;'>현재 파일 수집 진행도</p>", unsafe_allow_html=True)
         st.markdown(
             f"<p style='font-size: 3.2rem; font-weight: bold; text-align: center; margin: 0.25rem 0; line-height: 1.2;'>{current} / {target} 스윙</p>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
         st.progress(progress_val)
 
@@ -389,13 +377,24 @@ if fragment:
                 if st.button("💾 Stop & Save", type="primary", use_container_width=True, key="btn_stop_log"):
                     confirm_stop_logging()
 
-        if st.session_state.get('show_save_confirm', False):
+        if st.session_state.get("show_save_confirm", False):
             st.warning("저장할까요?")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("✅ 저장", key="btn_yes_save"): save_and_stop()
+                if st.button("✅ 저장", key="btn_yes_save"):
+                    save_and_stop()
             with c2:
-                if st.button("🗑️ 취소", key="btn_no_discard"): discard_and_stop()
+                if st.button("🗑️ 취소", key="btn_no_discard"):
+                    discard_and_stop()
+
+        # 화면 하단: 라벨별 저장 파일 개수 (폴더 스캔, 저장 시마다 갱신)
+        label_counts = get_label_file_counts()
+        st.markdown("---")
+        st.markdown("**📁 라벨별 수집 통계**")
+        cols = st.columns(6)
+        for idx, label in enumerate(sorted(label_counts.keys())):
+            with cols[idx % 6]:
+                st.metric(label=label, value=f"{label_counts[label]} 개")
 
         _render_tts_if_needed()
 

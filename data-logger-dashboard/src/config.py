@@ -13,7 +13,6 @@ MAX_QUEUE_SIZE = int(os.getenv("MAX_QUEUE_SIZE", 10000))  # 큐 최대 크기 (�
 PEAK_ACCEL_THRESHOLD_G = 1.5       # 스윙 피크 감지 가속도 임계값 (G)
 PEAK_COOLDOWN_SEC = 1.5            # 피크 감지 쿨다운 (초)
 PACING_DELAY_SEC = 2.0             # 페이싱 가이드 딜레이 (초)
-INFERENCE_PEAK_THRESHOLD_G = 2.5   # (레거시) 피크 감지용
 INFERENCE_TRIGGER_THRESHOLD_G = 3.0  # True Peak 정렬: 이 값을 넘으면 State 2 전환 (40샘플 대기)
 INFERENCE_FALSE_POSITIVE_G = 3.0   # 오탐 방지 최소 가속도 (G)
 # 1.2초 비대칭: [TruePeak-20 : TruePeak+40] = 60샘플 (피크를 인덱스 20에 정렬)

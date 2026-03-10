@@ -4,7 +4,7 @@ import threading
 import logging
 from datetime import datetime
 from queue import Queue
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 from bleak import BleakScanner, BleakClient
 from src.config import TARGET_DEVICE_NAME, SERVICE_UUID, CHARACTERISTIC_UUID
 
