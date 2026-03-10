@@ -5,7 +5,7 @@ import time
 import pandas as pd
 import plotly.graph_objects as go
 
-from src.config import SERVICE_UUID, INFERENCE_WINDOW_SAMPLES
+from src.config import SERVICE_UUID
 
 # 차트/게이지 한계치 (ESP32 ±16g 확장 반영)
 GAUGE_MAX_KMH = 180
@@ -21,7 +21,7 @@ def render_global_header():
     """메인 영역 최상단: 앱 타이틀 + 센서 연결 상태 뱃지 (사이드바 접힐 때 대비)."""
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown("## 🎾 Tennis Analyst")
+        st.markdown("## 🎾 Tennis Swing Analyzer")
     with col2:
         if st.session_state.get("ble_manager") and st.session_state.ble_manager.connected:
             if st.session_state.ble_manager.sensor_status == "error":
@@ -45,27 +45,6 @@ def _render_tts_if_needed():
             )
             st.session_state.tts_last_spoken_id = swing_id
 
-
-def _render_ai_debug_log():
-    """AI 실시간 확률 로그 (디버깅용)"""
-    st.markdown("---")
-    st.markdown("### 🔍 AI 실시간 확률 로그 (디버깅용)")
-    
-    debug_info = f"Buffer: {st.session_state.get('inference_debug_buffer_len', 0)}/{INFERENCE_WINDOW_SAMPLES}"
-    debug_info += f" | AI Model: {'Loaded' if st.session_state.get('runner') else 'None'}"
-    st.caption(debug_info)
-    
-    if st.session_state.get('inference_error'):
-        st.error(f"Inference Error: {st.session_state.inference_error}")
-        
-    prob_dict = st.session_state.get('continuous_probabilities', {})
-    if prob_dict:
-        log_text = ""
-        for label, score in prob_dict.items():
-            log_text += f"- **{label}**: {score*100:.1f}%\n"
-        st.markdown(log_text)
-    else:
-        st.caption("대기 중... (스윙 시 확률이 표시됩니다)")
 
 # Try to import fragment (Streamlit 1.37+)
 try:
@@ -146,45 +125,39 @@ def render_sidebar():
         render_tts_audio_toggle()
         st.markdown("---")
 
-        # 4. Settings & WiFi (하단)
+        # 4. Settings & WiFi (하단) — 사이드바는 이 한 곳에서만 렌더링 (중복 방지)
         with st.expander("🛠️ Settings & WiFi"):
-            # Smart WiFi 
             if st.button("WiFi Scan"):
-                 st.info("Scanning...")
-                 pass 
-
-            # Reboot System
+                st.info("Scanning...")
             if st.button("🔄 Reboot System"):
                 st.session_state.show_reboot_confirm = True
-
-            # Shutdown
             if st.button("🛑 Shutdown System"):
                 st.session_state.show_shutdown_confirm = True
 
-        if st.session_state.get('show_reboot_confirm', False):
-            st.warning("🔄 Reboot system?")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Yes, Reboot"):
-                    subprocess.run(["sudo", "reboot"])
-            with c2:
-                if st.button("Cancel Reboot"):
-                    st.session_state.show_reboot_confirm = False
-                    st.rerun()
+            if st.session_state.get('show_reboot_confirm', False):
+                st.warning("🔄 Reboot system?")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Yes, Reboot"):
+                        subprocess.run(["sudo", "reboot"])
+                with c2:
+                    if st.button("Cancel Reboot"):
+                        st.session_state.show_reboot_confirm = False
+                        st.rerun()
 
-        if st.session_state.get('show_shutdown_confirm', False):
-            st.error("Are you sure?")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Yes, Shutdown"):
-                    subprocess.run(["sudo", "shutdown", "-h", "now"])
-            with c2:
-                if st.button("Cancel Shutdown"):
-                    st.session_state.show_shutdown_confirm = False
-                    st.rerun()
+            if st.session_state.get('show_shutdown_confirm', False):
+                st.error("Are you sure?")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Yes, Shutdown"):
+                        subprocess.run(["sudo", "shutdown", "-h", "now"])
+                with c2:
+                    if st.button("Cancel Shutdown"):
+                        st.session_state.show_shutdown_confirm = False
+                        st.rerun()
 
 def render_connection_view(scan_callback):
-    st.markdown("## 👋 Welcome to Tennis Analyst")
+    st.markdown("## 👋 Welcome to Tennis Swing Analyzer")
     st.info("Connect your sensor to start.")
     
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -303,12 +276,10 @@ if fragment:
         with c2:
             st.metric("Backhand Count", st.session_state.swing_count_bh)
 
-        # 5. Status / Watchdog: BLE timeout & ERR:NO_SENSOR are shown at top in main app
-
-        # 6. TTS Speaker & AI Debug Log
+        # 5. TTS Speaker
         _render_tts_if_needed()
-        _render_ai_debug_log()
 
+    @fragment(run_every=0.2)
     def render_logger_tab():
         # 큐 비우기 → vis_buffer 반영 (process_data_queue가 큐를 소비하고 vis_buffer에 추가)
         process_data_queue()

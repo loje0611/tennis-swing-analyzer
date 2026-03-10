@@ -1,7 +1,6 @@
 import streamlit as st
 import asyncio
 import logging
-import time
 from datetime import datetime
 from src.ble_manager import RealBLEManager
 from src.ui import render_sidebar, render_connection_view, render_collection_view, render_global_header
@@ -10,7 +9,7 @@ from src.state import init_session_state
 # Early initialization of session state to load models
 # --- 1. 페이지 설정 ---
 st.set_page_config(
-    page_title="Data Logger Dashboard",
+    page_title="Tennis Swing Analyzer",
     page_icon="🎾",
     layout="wide"
 )
@@ -78,8 +77,3 @@ else:
         elif last_data and (datetime.now() - last_data).total_seconds() > timeout_sec:
             st.error("🔴 **BLE 타임아웃**: 2초 이상 센서 데이터가 없습니다. 연결을 확인하거나 재연결해 주세요.")
         render_collection_view()
-
-        # Data Logger 탭: 전체 렌더 후 자동 재실행 (Rerun 기반, 플리커링 없음)
-        if st.session_state.active_page != "🔥 Live Coaching":
-            time.sleep(0.2)  # 약 5 FPS
-            st.rerun()
