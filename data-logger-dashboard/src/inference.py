@@ -6,7 +6,6 @@ from datetime import datetime
 from src.config import (
     PEAK_ACCEL_THRESHOLD_G,
     PEAK_COOLDOWN_SEC,
-    PACING_DELAY_SEC,
     INFERENCE_TRIGGER_THRESHOLD_G,
     INFERENCE_FALSE_POSITIVE_G,
     INFERENCE_WINDOW_SAMPLES,
@@ -77,20 +76,13 @@ def process_data_queue():
     if max_accel_mag >= PEAK_ACCEL_THRESHOLD_G:
         if current_time - st.session_state.last_peak_time >= PEAK_COOLDOWN_SEC:
             st.session_state.last_peak_time = current_time
-            st.session_state.pacing_guide_triggered = False
             st.session_state.last_peak_samples_ago = 0
             peak_detected_this_batch = True
             if st.session_state.is_logging:
-                st.session_state.session_peak_count = st.session_state.get('session_peak_count', 0) + 1
-            print(f"Peak Detected: {max_accel_mag:.2f} G")
-            
-    # 2. Pacing Assistant
-    if st.session_state.is_logging:
-        if not st.session_state.pacing_guide_triggered:
-            if current_time - st.session_state.last_peak_time >= PACING_DELAY_SEC:
+                count = st.session_state.get('session_peak_count', 0) + 1
+                st.session_state.session_peak_count = count
                 st.session_state.tts_message = "다음"
-                st.session_state.tts_swing_id = f"pace_{current_time}"
-                st.session_state.pacing_guide_triggered = True
+                st.session_state.tts_swing_id = f"pace_{count}_{current_time}"
 
     # --- Peak Speed History for Gauge Display ---
     now = datetime.now()

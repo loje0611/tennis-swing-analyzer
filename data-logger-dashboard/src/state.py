@@ -121,7 +121,6 @@ def init_session_state():
     
     # Data Logger TTS State
     if 'last_peak_time' not in st.session_state: st.session_state.last_peak_time = 0.0
-    if 'pacing_guide_triggered' not in st.session_state: st.session_state.pacing_guide_triggered = False
     if 'session_peak_count' not in st.session_state: st.session_state.session_peak_count = 0
 
     # Data Logger UI: peak vline, mini chart, batch progress, total files saved

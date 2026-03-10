@@ -315,19 +315,13 @@ if fragment:
         )
         st.progress(progress_val)
 
-        # 컨트롤 + 라벨 설정
-        with st.expander("🏷️ 라벨 설정 · 로깅 제어", expanded=False):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_log")
-            with c2:
-                st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
-            if not st.session_state.is_logging:
-                if st.button("🔴 Start Logging", type="primary", use_container_width=True, key="btn_start_log"):
-                    start_logging()
-            else:
-                if st.button("💾 Stop & Save", type="primary", use_container_width=True, key="btn_stop_log"):
-                    confirm_stop_logging()
+        # Start/Stop 버튼 — Expander 바깥에 상시 노출
+        if not st.session_state.is_logging:
+            if st.button("🔴 Start Logging", type="primary", use_container_width=True, key="btn_start_log"):
+                start_logging()
+        else:
+            if st.button("💾 Stop & Save", type="primary", use_container_width=True, key="btn_stop_log"):
+                confirm_stop_logging()
 
         if st.session_state.get("show_save_confirm", False):
             st.warning("저장할까요?")
@@ -338,6 +332,14 @@ if fragment:
             with c2:
                 if st.button("🗑️ 취소", key="btn_no_discard"):
                     discard_and_stop()
+
+        # 라벨 설정 (접기/펴기 가능)
+        with st.expander("🏷️ 라벨 설정", expanded=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_log")
+            with c2:
+                st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
 
         # 화면 하단: 라벨별 저장 파일 개수 (폴더 스캔, 저장 시마다 갱신)
         label_counts = get_label_file_counts()
@@ -377,10 +379,7 @@ def start_logging():
     sub = st.session_state.sub_category
     st.session_state.tts_message = f"{main} {sub}, 로깅을 시작합니다."
     st.session_state.tts_swing_id = f"start_{time.time()}"
-    # Prevent premature "Next" by setting it to True initially
-    # It will be reset to False only after a valid peak is detected
-    st.session_state.pacing_guide_triggered = True 
-    st.session_state.last_peak_time = time.time()  # Reset cooldown
+    st.session_state.last_peak_time = time.time()
     st.session_state.session_peak_count = 0
     
     # Visual Confirmation
