@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 from src.ble_manager import RealBLEManager
 from src.ui import render_sidebar, render_connection_view, render_collection_view, render_global_header
+from src.tts import render_tts_listener
 from src.state import init_session_state
 
 # Early initialization of session state to load models
@@ -77,3 +78,4 @@ else:
         elif last_data and (datetime.now() - last_data).total_seconds() > timeout_sec:
             st.error("🔴 **BLE 타임아웃**: 2초 이상 센서 데이터가 없습니다. 연결을 확인하거나 재연결해 주세요.")
         render_collection_view()
+        render_tts_listener()

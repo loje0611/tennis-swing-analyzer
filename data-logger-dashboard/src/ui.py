@@ -12,7 +12,7 @@ GAUGE_MAX_KMH = 180
 from src.data_manager import save_data_to_csv, get_label_file_counts
 from src.styles import styles
 from src.state import init_session_state, load_model_safe, MODELS_DIR
-from src.tts import render_tts_audio_toggle, render_tts_speaker
+from src.tts import render_tts_audio_toggle, render_tts_request_write
 from src.inference import process_data_queue
 
 
@@ -34,16 +34,13 @@ def render_global_header():
 
 # --- 공통 UI 헬퍼 함수 ---
 def _render_tts_if_needed():
-    """TTS Speaker 렌더링 (새 스윙 이벤트가 있을 때만)"""
-    if st.session_state.get('tts_enabled', False):
-        swing_id = st.session_state.get('tts_swing_id', '')
-        last_spoken = st.session_state.get('tts_last_spoken_id', '')
-        if swing_id and swing_id != last_spoken:
-            render_tts_speaker(
-                st.session_state.get('tts_message', ''),
-                swing_id
-            )
-            st.session_state.tts_last_spoken_id = swing_id
+    """Fragment: write current TTS request to localStorage. The persistent listener
+    (rendered in main script) polls and speaks; avoids 0.2s iframe replacement killing 'Next'."""
+    render_tts_request_write(
+        tts_enabled=st.session_state.get('tts_enabled', False),
+        tts_message=st.session_state.get('tts_message', ''),
+        tts_swing_id=st.session_state.get('tts_swing_id', ''),
+    )
 
 
 # Try to import fragment (Streamlit 1.37+)
@@ -276,7 +273,7 @@ if fragment:
         with c2:
             st.metric("Backhand Count", st.session_state.swing_count_bh)
 
-        # 5. TTS Speaker
+        # 5. TTS: must run inside fragment so timer-driven runs inject "Next" / FH-BH announcements
         _render_tts_if_needed()
 
     @fragment(run_every=0.2)
@@ -350,6 +347,7 @@ if fragment:
             with cols[idx % 6]:
                 st.metric(label=label, value=f"{label_counts[label]} 개")
 
+        # TTS: must run inside fragment so "Next" and start message get injected on fragment runs
         _render_tts_if_needed()
 
 else:
@@ -377,8 +375,9 @@ def start_logging():
     st.session_state.logging_packet_count = 0
     main = st.session_state.main_category
     sub = st.session_state.sub_category
-    st.session_state.tts_message = f"{main} {sub}, 로깅을 시작합니다."
+    st.session_state.tts_message = f"{main} {sub}, starting logging."
     st.session_state.tts_swing_id = f"start_{time.time()}"
+    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
     st.session_state.last_peak_time = time.time()
     st.session_state.session_peak_count = 0
     
@@ -394,8 +393,9 @@ def save_and_stop():
     
     # TTS Announcement: End Logging
     count = st.session_state.get('session_peak_count', 0)
-    st.session_state.tts_message = f"{count}회 스윙, 로깅을 종료합니다."
+    st.session_state.tts_message = f"{count} swings, stopping logging."
     st.session_state.tts_swing_id = f"end_{time.time()}"
+    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
     
     if st.session_state.log_buffer:
         try:
@@ -416,8 +416,9 @@ def discard_and_stop():
 
     # TTS Announcement: Discard Logging
     count = st.session_state.get('session_peak_count', 0)
-    st.session_state.tts_message = f"{count}회 스윙, 로깅을 취소합니다."
+    st.session_state.tts_message = f"{count} swings, logging cancelled."
     st.session_state.tts_swing_id = f"discard_{time.time()}"
+    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
 
     st.toast("Discarded", icon="🗑️")
     
