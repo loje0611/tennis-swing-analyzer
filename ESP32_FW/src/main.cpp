@@ -23,9 +23,6 @@
 #define SDA_PIN D4
 #define SCL_PIN D5
 
-// Switch: LOW = Recording, HIGH = Standby
-#define SWITCH_PIN D1
-
 // Sampling: 50 Hz
 const unsigned long SAMPLING_INTERVAL_MS = 20;
 unsigned long last_sample_time = 0;
@@ -121,7 +118,6 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(SWITCH_PIN, INPUT_PULLUP);
 
   if (!MPU6050_Init()) {
     Serial.println("MPU6050 Init Failed");
@@ -158,9 +154,8 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
-  bool isRecording = (digitalRead(SWITCH_PIN) == LOW);
 
-  if (deviceConnected && isRecording && (now - last_sample_time >= SAMPLING_INTERVAL_MS)) {
+  if (deviceConnected && (now - last_sample_time >= SAMPLING_INTERVAL_MS)) {
     last_sample_time = now;
     float ax, ay, az, gx, gy, gz;
 
