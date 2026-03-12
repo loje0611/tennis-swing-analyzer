@@ -336,7 +336,7 @@ if fragment:
             with c1:
                 st.session_state.main_category = st.selectbox("Category", ["Forehand", "Backhand"], key="main_cat_log")
             with c2:
-                st.session_state.sub_category = st.selectbox("Type", ["Flat", "Topspin", "Slice"], key="sub_cat_log")
+                st.session_state.sub_category = st.selectbox("Type", ["Topspin", "Slice"], key="sub_cat_log")
 
         # 화면 하단: 라벨별 저장 파일 개수 (폴더 스캔, 저장 시마다 갱신)
         label_counts = get_label_file_counts()

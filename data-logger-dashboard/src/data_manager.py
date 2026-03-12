@@ -9,11 +9,15 @@ from src.config import DATA_FOLDER
 LABEL_FILENAME_PATTERN = re.compile(r"^\d{8}_\d{6}_(.+)_(.+)\.csv$")
 
 
+# Type 옵션: Flat 제거, Topspin / Slice 만 사용
+SUB_CATEGORIES = ("Topspin", "Slice")
+
+
 def get_label_file_counts() -> Dict[str, int]:
-    """데이터 폴더를 스캔하여 라벨(카테고리_타입)별 저장된 CSV 파일 개수를 반환."""
+    """데이터 폴더를 스캔하여 라벨(카테고리_타입)별 저장된 CSV 파일 개수를 반환. Flat 제외."""
     counts = {}
     for main in ("Forehand", "Backhand"):
-        for sub in ("Flat", "Topspin", "Slice"):
+        for sub in SUB_CATEGORIES:
             counts[f"{main}_{sub}"] = 0
     if not os.path.isdir(DATA_FOLDER):
         return counts
@@ -23,7 +27,8 @@ def get_label_file_counts() -> Dict[str, int]:
         m = LABEL_FILENAME_PATTERN.match(name)
         if m:
             label = f"{m.group(1)}_{m.group(2)}"
-            counts[label] = counts.get(label, 0) + 1
+            if label in counts:
+                counts[label] += 1
     return counts
 
 

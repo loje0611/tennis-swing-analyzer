@@ -84,7 +84,7 @@ def init_session_state():
     if 'is_logging' not in st.session_state: st.session_state.is_logging = False
     if 'collection_state' not in st.session_state: st.session_state.collection_state = 'ready'
     if 'main_category' not in st.session_state: st.session_state.main_category = 'Forehand'
-    if 'sub_category' not in st.session_state: st.session_state.sub_category = 'Flat'
+    if 'sub_category' not in st.session_state: st.session_state.sub_category = 'Topspin'
     if 'active_page' not in st.session_state: st.session_state.active_page = '🔥 Live Coaching'
     if 'operation_mode' not in st.session_state: st.session_state.operation_mode = '🎾 코트 모드'
     if 'last_data_time' not in st.session_state: st.session_state.last_data_time = datetime.now()
