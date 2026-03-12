@@ -117,10 +117,7 @@ def init_session_state():
         st.session_state.tts_enabled = get_settings().get("tts_enabled", False)
     if 'tts_message' not in st.session_state: st.session_state.tts_message = ""
     if 'tts_swing_id' not in st.session_state: st.session_state.tts_swing_id = ""
-    if 'tts_last_spoken_id' not in st.session_state: st.session_state.tts_last_spoken_id = ""
-    if 'tts_sequence' not in st.session_state: st.session_state.tts_sequence = 0
-    if 'last_played_tts_sequence' not in st.session_state: st.session_state.last_played_tts_sequence = -1
-    
+
     # Data Logger TTS State
     if 'last_peak_time' not in st.session_state: st.session_state.last_peak_time = 0.0
     if 'session_peak_count' not in st.session_state: st.session_state.session_peak_count = 0

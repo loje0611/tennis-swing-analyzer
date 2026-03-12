@@ -83,7 +83,6 @@ def process_data_queue():
                 st.session_state.session_peak_count = count
                 st.session_state.tts_message = "Next"
                 st.session_state.tts_swing_id = f"pace_{count}_{current_time}"
-                st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
 
     # --- Peak Speed History for Gauge Display ---
     now = datetime.now()
@@ -196,7 +195,6 @@ def process_data_queue():
                                                     speed = int(st.session_state.peak_speed_2s)
                                                     st.session_state.tts_message = f"{display_label}, {speed} kilometers"
                                                     st.session_state.tts_swing_id = f"fh_{st.session_state.swing_count_fh}_{time.time()}"
-                                                    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
                                             elif "Backhand" in best_label:
                                                 st.session_state.swing_count_bh += 1
                                                 st.session_state.last_swing_speed = st.session_state.peak_speed_2s
@@ -207,7 +205,6 @@ def process_data_queue():
                                                     speed = int(st.session_state.peak_speed_2s)
                                                     st.session_state.tts_message = f"{display_label}, {speed} kilometers"
                                                     st.session_state.tts_swing_id = f"bh_{st.session_state.swing_count_bh}_{time.time()}"
-                                                    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
                                             st.session_state.last_predicted_label = best_label
                                 except Exception as e:
                                     st.session_state.inference_error = str(e)

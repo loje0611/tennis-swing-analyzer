@@ -377,7 +377,6 @@ def start_logging():
     sub = st.session_state.sub_category
     st.session_state.tts_message = f"{main} {sub}, starting logging."
     st.session_state.tts_swing_id = f"start_{time.time()}"
-    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
     st.session_state.last_peak_time = time.time()
     st.session_state.session_peak_count = 0
     
@@ -395,8 +394,7 @@ def save_and_stop():
     count = st.session_state.get('session_peak_count', 0)
     st.session_state.tts_message = f"{count} swings, stopping logging."
     st.session_state.tts_swing_id = f"end_{time.time()}"
-    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
-    
+
     if st.session_state.log_buffer:
         try:
             fp = save_data_to_csv(st.session_state.log_buffer, st.session_state.main_category, st.session_state.sub_category)
@@ -418,7 +416,6 @@ def discard_and_stop():
     count = st.session_state.get('session_peak_count', 0)
     st.session_state.tts_message = f"{count} swings, logging cancelled."
     st.session_state.tts_swing_id = f"discard_{time.time()}"
-    st.session_state.tts_sequence = st.session_state.get('tts_sequence', 0) + 1
 
     st.toast("Discarded", icon="🗑️")
     
