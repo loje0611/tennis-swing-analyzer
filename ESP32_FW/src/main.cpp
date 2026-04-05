@@ -2,6 +2,12 @@
 #include <NimBLEDevice.h>
 #include <Wire.h>
 #include <esp_bt.h>
+#include <Preferences.h>
+
+Preferences preferences;
+float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
+float gyroOffsetX = 0.0f, gyroOffsetY = 0.0f, gyroOffsetZ = 0.0f;
+bool needsCalibration = false;
 
 // --- BLE Configuration ---
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
@@ -96,7 +102,66 @@ bool MPU6050_Read(float &ax, float &ay, float &az, float &gx, float &gy, float &
   return true;
 }
 
+void calibrateSensor() {
+  Serial.println("Calibrating... Please keep the sensor flat and still.");
+  float sum_ax = 0, sum_ay = 0, sum_az = 0;
+  float sum_gx = 0, sum_gy = 0, sum_gz = 0;
+  const int samples = 500;
+  
+  for (int i = 0; i < samples; i++) {
+    float ax, ay, az, gx, gy, gz;
+    while (!MPU6050_Read(ax, ay, az, gx, gy, gz)) {
+      delay(1);
+    }
+    sum_ax += ax;
+    sum_ay += ay;
+    sum_az += az;
+    sum_gx += gx;
+    sum_gy += gy;
+    sum_gz += gz;
+    delay(2);
+  }
+  
+  offsetX = sum_ax / samples;
+  offsetY = sum_ay / samples;
+  offsetZ = (sum_az / samples) - 1.0f; // Assuming Z is vertical, subtracting 1G
+  gyroOffsetX = sum_gx / samples;
+  gyroOffsetY = sum_gy / samples;
+  gyroOffsetZ = sum_gz / samples;
+  
+  preferences.putFloat("ax", offsetX);
+  preferences.putFloat("ay", offsetY);
+  preferences.putFloat("az", offsetZ);
+  preferences.putFloat("gx", gyroOffsetX);
+  preferences.putFloat("gy", gyroOffsetY);
+  preferences.putFloat("gz", gyroOffsetZ);
+  
+  Serial.printf("Calibration done! Offsets: a(%.2f, %.2f, %.2f) g(%.2f, %.2f, %.2f)\n", 
+                offsetX, offsetY, offsetZ, gyroOffsetX, gyroOffsetY, gyroOffsetZ);
+  
+  if (pCharacteristic != NULL) {
+    const char* doneMsg = "DONE";
+    pCharacteristic->setValue((uint8_t*)doneMsg, strlen(doneMsg));
+    pCharacteristic->notify();
+    Serial.println("Calibration Done! Sent 'DONE' signal to App.");
+  }
+}
+
 // --- BLE Callbacks ---
+class MyCharacteristicCallbacks: public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pCharacteristic) override {
+    std::string value = pCharacteristic->getValue();
+    if (value.length() > 0) {
+      String command = value.c_str();
+      command.trim();
+      if (command.equals("CAL")) {
+        Serial.println("Calibration requested.");
+        needsCalibration = true;
+      }
+    }
+  }
+};
+
 // Base class has only onConnect(NimBLEServer*); get conn handle via getPeerInfo(0) after connect.
 class MyServerCallbacks : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer* pServer) override {
@@ -119,6 +184,16 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 void setup() {
   Serial.begin(115200);
 
+  preferences.begin("sensor_cal", false);
+  offsetX = preferences.getFloat("ax", 0.0f);
+  offsetY = preferences.getFloat("ay", 0.0f);
+  offsetZ = preferences.getFloat("az", 0.0f);
+  gyroOffsetX = preferences.getFloat("gx", 0.0f);
+  gyroOffsetY = preferences.getFloat("gy", 0.0f);
+  gyroOffsetZ = preferences.getFloat("gz", 0.0f);
+  Serial.printf("Loaded Offsets: a(%.2f, %.2f, %.2f) g(%.2f, %.2f, %.2f)\n", 
+                offsetX, offsetY, offsetZ, gyroOffsetX, gyroOffsetY, gyroOffsetZ);
+
   if (!MPU6050_Init()) {
     Serial.println("MPU6050 Init Failed");
   } else {
@@ -136,7 +211,8 @@ void setup() {
   NimBLEService* pService = pServer->createService(SERVICE_UUID);
   pCharacteristic = pService->createCharacteristic(
       CHARACTERISTIC_UUID,
-      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::WRITE);
+  pCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
   pService->start();
 
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
@@ -155,11 +231,25 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
+  if (needsCalibration) {
+    calibrateSensor();
+    needsCalibration = false;
+    last_sample_time = millis(); // Reset timer so we don't immediately publish stale data
+    return;
+  }
+
   if (deviceConnected && (now - last_sample_time >= SAMPLING_INTERVAL_MS)) {
     last_sample_time = now;
     float ax, ay, az, gx, gy, gz;
 
     if (MPU6050_Read(ax, ay, az, gx, gy, gz)) {
+      ax -= offsetX;
+      ay -= offsetY;
+      az -= offsetZ;
+      gx -= gyroOffsetX;
+      gy -= gyroOffsetY;
+      gz -= gyroOffsetZ;
+
       char buf[64];
       int n = snprintf(buf, sizeof(buf), "%.3f,%.3f,%.3f,%.3f,%.3f,%.3f", ax, ay, az, gx, gy, gz);
       if (n > 0) {
